@@ -11,6 +11,13 @@ pub struct WelcomeMsg {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
+pub enum Phase {
+    PakePhase,
+    VersionPhase,
+    ApplicationPhase(i32)
+}
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 #[serde(tag = "type")]
 pub enum Message {
@@ -44,12 +51,12 @@ pub enum Message {
         mailbox: String,
     },
     Add {
-        phase: String,
+        phase: Phase,
         body: String,
     },
     Message {
         side: String,
-        phase: String,
+        phase: Phase,
         body: String,
         id: String,
     },
@@ -99,10 +106,18 @@ pub fn open(mailbox: &str) -> Message {
     }
 }
 
-pub fn add(phase: &str, body: &str) -> Message {
+fn phase_name(phase: Phase) -> String {
+    match phase {
+        Phase::PakePhase => "pake".to_string(),
+        Phase::VersionPhase => "version".to_string(),
+        Phase::ApplicationPhase(n) => n.to_string()
+    }
+}
+
+pub fn add(phase: Phase, body: &str) -> Message {
     // TODO: make this take Vec<u8>, do the hex-encoding internally
     Message::Add {
-        phase: phase.to_string(),
+        phase: phase,
         body: body.to_string(),
     }
 }
@@ -186,7 +201,7 @@ mod test {
 
     #[test]
     fn test_add() {
-        let m1 = add("phase1", "body");
+        let m1 = add(Phase::VersionPhase, "body");
         let s = serde_json::to_string(&m1).unwrap();
         let m2 = deserialize(&s);
         assert_eq!(m1, m2);
