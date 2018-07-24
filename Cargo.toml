@@ -4,6 +4,7 @@ members = [
 #        "io/tokio",
         "io/blocking",
         "cli",
+        "core-c"
 ]
 
 [badges]
