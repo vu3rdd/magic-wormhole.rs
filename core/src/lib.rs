@@ -54,6 +54,7 @@ pub use transfer::{
     DirectType, Hints, OfferType, PeerMessage, RelayType, TransitType,
 };
 
+#[repr(C)]
 pub struct WormholeCore {
     allocator: allocator::AllocatorMachine,
     boss: boss::BossMachine,
