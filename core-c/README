@@ -1,0 +1,10 @@
+To build a shared library for Core:
+
+#1: add android tools to the path
+
+export PATH=/path/to/ndk/arm/bin:/path/to/ndk/aarch64/bin:/path/to/ndk/x86/bin:$PATH
+
+#2: build for specific arch
+eg: for armv7
+
+env CC_armv7-linux-androideabi=arm-linux-androideabi-gcc PKG_CONFIG_ALLOW_CROSS=1  cargo build --target armv7-linux-androideabi --release
