@@ -16,6 +16,11 @@ rand = "0.5"
 rustc-serialize = "0.3"
 regex = "1.0"
 
+[target.'cfg(target_os="android")'.dependencies]
+jni = { version = "0.5", default-features = false }
+
+[lib]
+crate-type = ["dylib"]
 
 [dev-dependencies]
 ws = "0.7"
