@@ -8,3 +8,6 @@ jni = { version = "0.5", default-features = false }
 
 [lib]
 crate-type = ["dylib"]
+
+[dependencies]
+magic-wormhole-core = { path = "../core" }
