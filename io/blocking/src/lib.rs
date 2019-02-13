@@ -95,3 +95,31 @@ pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) 
 
     remote_msg
 }
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_Wormhole_receive(env: JNIEnv,
+                                             _class: JClass,
+                                             server: JString,
+                                             appid: JString,
+                                             code: JString)
+                                             -> jstring {
+    // First, we have to get the string out of Java. Check out the `strings`
+    // module for more info on how this works.
+    let server: String =
+        env.get_string(server).expect("Couldn't get java string!").into();
+
+    let appid: String =
+        env.get_string(appid).expect("Couldn't get java string!").into();
+
+    let code: String =
+        env.get_string(code).expect("Couldn't get java string!").into();
+
+    // Then we have to create a new Java string to return. Again, more info
+    // in the `strings` module.
+    let output = receive(server, appid, code);
+    let joutput = env.new_string(output)
+        .expect("Couldn't create java string!");
+    // Finally, extract the raw pointer to return.
+    joutput.into_inner()
+}

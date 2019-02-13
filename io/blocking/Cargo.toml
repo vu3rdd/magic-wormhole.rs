@@ -12,5 +12,5 @@ hex = "0.3"
 jni = "0.10.2"
 
 [lib]
-crate-type = ["dylib"]
+crate-type = ["cdylib"]
 
