@@ -3,9 +3,8 @@ members = [
         "core",
 #        "io/tokio",
         "io/blocking",
-        "cli",
-        "core-c"
+#        "cli",
 ]
 
-[badges]
-travis-ci = { repository = "warner/magic-wormhole.rs" }
+#[badges]
+#travis-ci = { repository = "warner/magic-wormhole.rs" }
