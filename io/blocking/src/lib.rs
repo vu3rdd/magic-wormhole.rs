@@ -3,6 +3,7 @@ extern crate serde_json;
 extern crate url;
 extern crate ws;
 extern crate hex;
+extern crate jni;
 
 mod blocking;
 use magic_wormhole_core::message;
@@ -10,15 +11,23 @@ use magic_wormhole_core::{file_ack, message_ack, OfferType, PeerMessage};
 use std::str;
 pub use blocking::*;
 
-#[repr(C)]
-pub struct Env {
-    pub mailbox_server: String,
-    pub app_id: String,
-}
+// This is the interface to the JVM that we'll call the majority of our
+// methods on.
+use jni::JNIEnv;
+
+// These objects are what you should use as arguments to your native
+// function. They carry extra lifetime information to prevent them escaping
+// this context and getting used after being GC'd.
+use jni::objects::{JClass, JString};
+
+// This is just a pointer. We'll be returning it from our function. We
+// can't return one of the objects with lifetime information because the
+// lifetime checker won't let us.
+use jni::sys::jstring;
 
 #[no_mangle]
-pub fn send(env: Env, msg: String) {
-    let mut w = Wormhole::new(&env.app_id, &env.mailbox_server);
+pub extern "C" fn send(mailbox_server: String, app_id: String, msg: String) {
+    let mut w = Wormhole::new(&app_id, &mailbox_server);
     println!("connecting..");
     // w.set_code("4-purple-sausages");
     w.allocate_code(2);
@@ -38,8 +47,8 @@ pub fn send(env: Env, msg: String) {
 }
 
 #[no_mangle]
-pub fn receive(env: Env, code: String) -> String {
-    let mut w = Wormhole::new(&env.app_id, &env.mailbox_server);
+pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) -> String {
+    let mut w = Wormhole::new(&app_id, &mailbox_server);
     println!("connecting..");
     w.set_code(&code);
     let verifier = w.get_verifier();
