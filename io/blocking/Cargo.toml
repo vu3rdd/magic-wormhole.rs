@@ -8,6 +8,8 @@ magic-wormhole-core = { path = "../../core" }
 ws = "0.7.*"
 url = "1.7"
 serde_json = "1.0"
-
-[dev-dependencies]
 hex = "0.3"
+
+[lib]
+crate-type = ["dylib"]
+
