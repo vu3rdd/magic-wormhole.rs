@@ -98,12 +98,12 @@ pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) 
 
 #[no_mangle]
 #[allow(non_snake_case)]
-pub extern "system" fn Java_Wormhole_receive(env: JNIEnv,
-                                             _class: JClass,
-                                             server: JString,
-                                             appid: JString,
-                                             code: JString)
-                                             -> jstring {
+pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive(env: JNIEnv,
+                                                                                 _class: JClass,
+                                                                                 server: JString,
+                                                                                 appid: JString,
+                                                                                 code: JString)
+                                                                                 -> jstring {
     // First, we have to get the string out of Java. Check out the `strings`
     // module for more info on how this works.
     let server: String =
