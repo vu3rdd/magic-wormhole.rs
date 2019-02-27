@@ -55,9 +55,10 @@ struct WSConnection {
 }
 
 impl ws::Handler for WSConnection {
-    fn on_open(&mut self, _: ws::Handshake) -> Result<(), ws::Error> {
+    fn on_open(&mut self, _hs : ws::Handshake) -> Result<(), ws::Error> {
         // now that the outbound side is prepared to send messages, notify
         // the Core
+        trace!("handshake done");
         self.tx
             .send(ToCore::WebSocketConnectionMade(self.handle))
             .unwrap();
@@ -129,6 +130,7 @@ fn ws_connector(
     let b = ws::Builder::new();
     let mut w1 = b.build(f).unwrap();
     w1.connect(Url::parse(url).unwrap()).unwrap();
+    trace!("ws_connector: Connected to {:?}", url);
     w1.run().unwrap(); // blocks forever
 }
 
@@ -197,8 +199,12 @@ impl CoreWrapper {
             CancelTimer(handle) => {
                 self.timers.remove(&handle);
             }
-            WebSocketOpen(handle, url) => self.websocket_open(handle, url),
+            WebSocketOpen(handle, url) => {
+                trace!("WebSocketOpen {:?}", url);
+                self.websocket_open(handle, url)
+            },
             WebSocketSendMessage(handle, msg) => {
+                trace!("WebSocketSendMessage: {:?}", msg);
                 self.websocket_send(handle, msg)
             }
             WebSocketClose(handle) => self.websocket_close(handle),

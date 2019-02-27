@@ -10,7 +10,11 @@ url = "1.7"
 serde_json = "1.0"
 hex = "0.3"
 jni = "0.10.2"
+log = "0.4.0"
 
 [lib]
 crate-type = ["cdylib"]
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.7"
 

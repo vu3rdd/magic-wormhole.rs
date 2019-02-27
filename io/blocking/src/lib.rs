@@ -4,6 +4,14 @@ extern crate url;
 extern crate ws;
 extern crate hex;
 extern crate jni;
+#[macro_use] extern crate log;
+
+#[cfg(target_os = "android")]
+extern crate android_logger;
+
+use log::Level;
+#[cfg(target_os = "android")]
+use android_logger::Filter;
 
 mod blocking;
 use magic_wormhole_core::message;
@@ -48,29 +56,29 @@ pub extern "C" fn send(mailbox_server: String, app_id: String, msg: String) {
 
 #[no_mangle]
 pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) -> String {
+    trace!("connecting..");
     let mut w = Wormhole::new(&app_id, &mailbox_server);
-    println!("connecting..");
     w.set_code(&code);
     let verifier = w.get_verifier();
-    println!("verifier: {}", hex::encode(verifier));
-    println!("receiving..");
+    trace!("verifier: {}", hex::encode(verifier));
+    trace!("receiving..");
     let msg = w.get_message();
     let actual_message =
         PeerMessage::deserialize(str::from_utf8(&msg).unwrap());
     let remote_msg = match actual_message {
         PeerMessage::Offer(offer) => match offer {
             OfferType::Message(msg) => {
-                println!("{}", msg);
+                trace!("{}", msg);
                 w.send_message(message_ack("ok").serialize().as_bytes());
                 msg.to_string()
             }
             OfferType::File { .. } => {
-                println!("Received file offer {:?}", offer);
+                trace!("Received file offer {:?}", offer);
                 w.send_message(file_ack("ok").serialize().as_bytes());
                 "".to_string()
             }
             OfferType::Directory { .. } => {
-                println!("Received directory offer: {:?}", offer);
+                trace!("Received directory offer: {:?}", offer);
                 // TODO: We are doing file_ack without asking user
                 w.send_message(file_ack("ok").serialize().as_bytes());
                 "".to_string()
@@ -80,20 +88,22 @@ pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) 
             panic!("Should not receive answer type, I'm receiver")
         },
         PeerMessage::Error(err) => {
-            println!("Something went wrong: {}", err);
+            trace!("Something went wrong: {}", err);
             "".to_string()
         },
         PeerMessage::Transit(transit) => {
             // TODO: This should start transit server connection or direct file transfer
-            println!("Transit Message received: {:?}", transit);
+            trace!("Transit Message received: {:?}", transit);
             "".to_string()
         }
     };
-    println!("closing..");
+    trace!("closing..");
     w.close();
-    println!("closed");
+    trace!("closed");
 
+    //let remote_msg = "foobar".to_string();
     remote_msg
+    
 }
 
 #[no_mangle]
@@ -106,6 +116,7 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
                                                                                  -> jstring {
     // First, we have to get the string out of Java. Check out the `strings`
     // module for more info on how this works.
+    trace!("receiving ...");
     let server: String =
         env.get_string(server).expect("Couldn't get java string!").into();
 
@@ -122,4 +133,43 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
         .expect("Couldn't create java string!");
     // Finally, extract the raw pointer to return.
     joutput.into_inner()
+}
+
+#[no_mangle]
+pub extern "C" fn test(mailbox_server: String, app_id: String, _code: String) {
+    trace!("connecting..");
+    Wormhole::new(&app_id, &mailbox_server);
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_test(env: JNIEnv,
+                                                                              _class: JClass,
+                                                                              server: JString,
+                                                                              appid: JString,
+                                                                              code: JString) {
+    // First, we have to get the string out of Java. Check out the `strings`
+    // module for more info on how this works.
+    trace!("receiving ...");
+    let server: String =
+        env.get_string(server).expect("Couldn't get java string!").into();
+
+    let appid: String =
+        env.get_string(appid).expect("Couldn't get java string!").into();
+
+    let code: String =
+        env.get_string(code).expect("Couldn't get java string!").into();
+
+    // Then we have to create a new Java string to return. Again, more info
+    // in the `strings` module.
+    test(server, appid, code);
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+#[cfg(target_os = "android")]
+pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_init(_env: JNIEnv,
+                                                                              _class: JClass) {
+    android_logger::init_once(
+        Filter::default().with_min_level(Level::Trace), Some("Wormhole"));
 }
