@@ -34,7 +34,7 @@ use jni::objects::{JClass, JString};
 use jni::sys::jstring;
 
 #[no_mangle]
-pub extern "C" fn send(mailbox_server: String, app_id: String, msg: String) {
+pub extern "system" fn send(mailbox_server: String, app_id: String, msg: String) {
     let mut w = Wormhole::new(&app_id, &mailbox_server);
     println!("connecting..");
     // w.set_code("4-purple-sausages");
@@ -55,7 +55,7 @@ pub extern "C" fn send(mailbox_server: String, app_id: String, msg: String) {
 }
 
 #[no_mangle]
-pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) -> String {
+pub extern "system" fn receive(mailbox_server: String, app_id: String, code: String) -> String {
     trace!("connecting..");
     let mut w = Wormhole::new(&app_id, &mailbox_server);
     w.set_code(&code);
@@ -103,7 +103,6 @@ pub extern "C" fn receive(mailbox_server: String, app_id: String, code: String) 
 
     //let remote_msg = "foobar".to_string();
     remote_msg
-    
 }
 
 #[no_mangle]
@@ -117,53 +116,21 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
     // First, we have to get the string out of Java. Check out the `strings`
     // module for more info on how this works.
     trace!("receiving ...");
-    let server: String =
-        env.get_string(server).expect("Couldn't get java string!").into();
+    let jvm_server = env.get_string(server).expect("Couldn't get java string!").into();
 
-    let appid: String =
-        env.get_string(appid).expect("Couldn't get java string!").into();
+    let jvm_appid = env.get_string(appid).expect("Couldn't get java string!").into();
 
-    let code: String =
-        env.get_string(code).expect("Couldn't get java string!").into();
+    let jvm_code = env.get_string(code).expect("Couldn't get java string!").into();
 
     // Then we have to create a new Java string to return. Again, more info
     // in the `strings` module.
-    let output = receive(server, appid, code);
+    let output = receive(jvm_server, jvm_appid, jvm_code);
     let joutput = env.new_string(output)
         .expect("Couldn't create java string!");
     // Finally, extract the raw pointer to return.
     joutput.into_inner()
 }
 
-#[no_mangle]
-pub extern "C" fn test(mailbox_server: String, app_id: String, _code: String) {
-    trace!("connecting..");
-    Wormhole::new(&app_id, &mailbox_server);
-}
-
-#[no_mangle]
-#[allow(non_snake_case)]
-pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_test(env: JNIEnv,
-                                                                              _class: JClass,
-                                                                              server: JString,
-                                                                              appid: JString,
-                                                                              code: JString) {
-    // First, we have to get the string out of Java. Check out the `strings`
-    // module for more info on how this works.
-    trace!("receiving ...");
-    let server: String =
-        env.get_string(server).expect("Couldn't get java string!").into();
-
-    let appid: String =
-        env.get_string(appid).expect("Couldn't get java string!").into();
-
-    let code: String =
-        env.get_string(code).expect("Couldn't get java string!").into();
-
-    // Then we have to create a new Java string to return. Again, more info
-    // in the `strings` module.
-    test(server, appid, code);
-}
 
 #[no_mangle]
 #[allow(non_snake_case)]
@@ -173,3 +140,4 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_init(_e
     android_logger::init_once(
         Filter::default().with_min_level(Level::Trace), Some("Wormhole"));
 }
+
