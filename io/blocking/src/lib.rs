@@ -33,8 +33,7 @@ use jni::objects::{JClass, JString};
 // lifetime checker won't let us.
 use jni::sys::jstring;
 
-#[no_mangle]
-pub extern "system" fn send(mailbox_server: String, app_id: String, msg: String) {
+fn send(mailbox_server: String, app_id: String, msg: String) {
     let mut w = Wormhole::new(&app_id, &mailbox_server);
     println!("connecting..");
     // w.set_code("4-purple-sausages");
@@ -54,8 +53,7 @@ pub extern "system" fn send(mailbox_server: String, app_id: String, msg: String)
     println!("closed");
 }
 
-#[no_mangle]
-pub extern "system" fn receive(mailbox_server: String, app_id: String, code: String) -> String {
+fn receive(mailbox_server: String, app_id: String, code: String) -> String {
     trace!("connecting..");
     let mut w = Wormhole::new(&app_id, &mailbox_server);
     w.set_code(&code);
