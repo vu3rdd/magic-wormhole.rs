@@ -18,6 +18,7 @@ use magic_wormhole_core::message;
 use magic_wormhole_core::{file_ack, message_ack, OfferType, PeerMessage};
 use std::str;
 pub use blocking::*;
+use std::panic;
 
 // This is the interface to the JVM that we'll call the majority of our
 // methods on.
@@ -122,11 +123,25 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
 
     // Then we have to create a new Java string to return. Again, more info
     // in the `strings` module.
-    let output = receive(jvm_server, jvm_appid, jvm_code);
-    let joutput = env.new_string(output)
-        .expect("Couldn't create java string!");
-    // Finally, extract the raw pointer to return.
-    joutput.into_inner()
+    let output = panic::catch_unwind(|| {
+        receive(jvm_server, jvm_appid, jvm_code)
+    });
+
+    match output {
+        Ok(msg) => {
+            let joutput = env.new_string(msg.to_string())
+                .expect("Couldn't create java string!");
+            // Finally, extract the raw pointer to return.
+            return joutput.into_inner();
+        },
+        Err(e) => {
+            let _ = env.throw(("java/lang/Exception", format!("{:?}", e)));
+            let joutput = env.new_string("".to_string())
+                .expect("Couldn't create java string!");
+            // Finally, extract the raw pointer to return.
+            return joutput.into_inner();
+        }
+    }
 }
 
 
