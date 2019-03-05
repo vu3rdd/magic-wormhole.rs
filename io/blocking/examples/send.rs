@@ -3,7 +3,7 @@
 extern crate magic_wormhole_io_blocking;
 
 // Can ws do hostname lookup? Use ip addr, not localhost, for now
-const MAILBOX_SERVER: &'static str = "ws://127.0.0.1:4000/v1";
+const MAILBOX_SERVER: &'static str = "ws://relay.magic-wormhole.io:4000/v1";
 const APPID: &'static str = "lothar.com/wormhole/text-or-file-xfer";
 
 fn main() {
