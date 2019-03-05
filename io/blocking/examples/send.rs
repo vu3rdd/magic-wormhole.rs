@@ -10,5 +10,8 @@ fn main() {
     let mailbox_server = String::from(MAILBOX_SERVER);
     let app_id = String::from(APPID);
 
-    magic_wormhole_io_blocking::send(mailbox_server, app_id, "hello from rust".to_string());
+    let mut w = magic_wormhole_io_blocking::connect(app_id, mailbox_server);
+    let code = magic_wormhole_io_blocking::get_code(&mut w);
+    println!("got the code: {}", code);
+    magic_wormhole_io_blocking::send(&mut w, code, "hello from rust".to_string());
 }

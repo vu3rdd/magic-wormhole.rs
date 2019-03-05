@@ -38,17 +38,17 @@ pub fn connect(app_id: String, mailbox_server: String) -> Wormhole {
     Wormhole::new(&app_id.as_str(), &mailbox_server.as_str())
 }
 
-pub unsafe fn get_code(ptr: i64) -> String {
-    let w = &mut *(ptr as *mut Wormhole);
+pub fn get_code(w: &mut Wormhole) -> String {
+    //let w = &mut *(ptr as *mut Wormhole);
 
     w.allocate_code(2);
     w.get_code()
 }
 
-pub unsafe fn send(ptr: i64, code: String, msg: String) {
-    let w = &mut *(ptr as *mut Wormhole);
+pub fn send(w: &mut Wormhole, code: String, msg: String) {
+    //let w = &mut *(ptr as *mut Wormhole);
 
-    w.set_code(&code);
+    //w.set_code(&code);
     w.send_message(message(&msg).serialize().as_bytes());
     println!("sent..");
     // if we close right away, we won't actually send anything. Wait for at
@@ -180,7 +180,8 @@ pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_
                                                                                         _class: JClass,
                                                                                         ptr: jlong)
                                                                                         -> jstring {
-    let output = get_code(ptr); //jvm_ptr as &mut blocking::Wormhole);
+    let w = &mut *(ptr as *mut Wormhole);
+    let output = get_code(w); //jvm_ptr as &mut blocking::Wormhole);
 
     let joutput = env.new_string(output)
         .expect("Couldn't create java string!");
@@ -201,5 +202,6 @@ pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_
     let jvm_code = env.get_string(code).expect("Couldn't get java string!").into();
     let jvm_message = env.get_string(msg).expect("Couldn't get java string!").into();
 
-    send(ptr, jvm_code, jvm_message);
+    let w = &mut *(ptr as *mut Wormhole);
+    send(w, jvm_code, jvm_message);
 }
