@@ -32,16 +32,23 @@ use jni::objects::{JClass, JString};
 // This is just a pointer. We'll be returning it from our function. We
 // can't return one of the objects with lifetime information because the
 // lifetime checker won't let us.
-use jni::sys::jstring;
+use jni::sys::{jstring, jlong};
 
-fn send(mailbox_server: String, app_id: String, msg: String) {
-    let mut w = Wormhole::new(&app_id, &mailbox_server);
-    println!("connecting..");
-    // w.set_code("4-purple-sausages");
+pub fn connect(app_id: String, mailbox_server: String) -> Wormhole {
+    Wormhole::new(&app_id.as_str(), &mailbox_server.as_str())
+}
+
+pub unsafe fn get_code(ptr: i64) -> String {
+    let w = &mut *(ptr as *mut Wormhole);
+
     w.allocate_code(2);
-    let code = w.get_code();
-    println!("code is: {}", code);
-    println!("sending..");
+    w.get_code()
+}
+
+pub unsafe fn send(ptr: i64, code: String, msg: String) {
+    let w = &mut *(ptr as *mut Wormhole);
+
+    w.set_code(&code);
     w.send_message(message(&msg).serialize().as_bytes());
     println!("sent..");
     // if we close right away, we won't actually send anything. Wait for at
@@ -54,9 +61,9 @@ fn send(mailbox_server: String, app_id: String, msg: String) {
     println!("closed");
 }
 
-fn receive(mailbox_server: String, app_id: String, code: String) -> String {
+pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
     trace!("connecting..");
-    let mut w = Wormhole::new(&app_id, &mailbox_server);
+    let mut w = connect(app_id, mailbox_server); //Wormhole::new(&app_id, &mailbox_server);
     w.set_code(&code);
     let verifier = w.get_verifier();
     trace!("verifier: {}", hex::encode(verifier));
@@ -116,9 +123,7 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
     // module for more info on how this works.
     trace!("receiving ...");
     let jvm_server = env.get_string(server).expect("Couldn't get java string!").into();
-
     let jvm_appid = env.get_string(appid).expect("Couldn't get java string!").into();
-
     let jvm_code = env.get_string(code).expect("Couldn't get java string!").into();
 
     // Then we have to create a new Java string to return. Again, more info
@@ -144,7 +149,6 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
     }
 }
 
-
 #[no_mangle]
 #[allow(non_snake_case)]
 #[cfg(target_os = "android")]
@@ -154,3 +158,48 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_init(_e
         Filter::default().with_min_level(Level::Trace), Some("Wormhole"));
 }
 
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_connect(env: JNIEnv,
+                                                                                 _class: JClass,
+                                                                                 appid: JString,
+                                                                                 server: JString)
+                                                                                 -> jlong {
+    let jvm_server = env.get_string(server).expect("Couldn't get java string!").into();
+    let jvm_appid = env.get_string(appid).expect("Couldn't get java string!").into();
+
+    let ptr = connect(jvm_appid, jvm_server);
+
+    Box::into_raw(Box::new(ptr)) as jlong
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_getcode(env: JNIEnv,
+                                                                                        _class: JClass,
+                                                                                        ptr: jlong)
+                                                                                        -> jstring {
+    let output = get_code(ptr); //jvm_ptr as &mut blocking::Wormhole);
+
+    let joutput = env.new_string(output)
+        .expect("Couldn't create java string!");
+    // Finally, extract the raw pointer to return.
+    return joutput.into_inner();
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_send(env: JNIEnv,
+                                                                                     _class: JClass,
+                                                                                     ptr: jlong,
+                                                                                     code: JString,
+                                                                                     msg: JString) {
+    // First, we have to get the string out of Java. Check out the `strings`
+    // module for more info on how this works.
+    trace!("sending ...");
+    let jvm_code = env.get_string(code).expect("Couldn't get java string!").into();
+    let jvm_message = env.get_string(msg).expect("Couldn't get java string!").into();
+
+    send(ptr, jvm_code, jvm_message);
+}
