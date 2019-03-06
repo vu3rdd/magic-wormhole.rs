@@ -39,16 +39,11 @@ pub fn connect(app_id: String, mailbox_server: String) -> Wormhole {
 }
 
 pub fn get_code(w: &mut Wormhole) -> String {
-    //let w = &mut *(ptr as *mut Wormhole);
-
     w.allocate_code(2);
     w.get_code()
 }
 
 pub fn send(w: &mut Wormhole, code: String, msg: String) {
-    //let w = &mut *(ptr as *mut Wormhole);
-
-    //w.set_code(&code);
     w.send_message(message(&msg).serialize().as_bytes());
     println!("sent..");
     // if we close right away, we won't actually send anything. Wait for at
