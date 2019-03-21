@@ -58,7 +58,7 @@ pub fn send(w: &mut Wormhole, code: String, msg: String) {
 
 pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
     trace!("connecting..");
-    let mut w = connect(app_id, mailbox_server); //Wormhole::new(&app_id, &mailbox_server);
+    let mut w = connect(app_id.clone(), mailbox_server); //Wormhole::new(&app_id, &mailbox_server);
     w.set_code(&code);
     let verifier = w.get_verifier();
     trace!("verifier: {}", hex::encode(verifier));
@@ -94,7 +94,10 @@ pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
         },
         PeerMessage::Transit(transit) => {
             // TODO: This should start transit server connection or direct file transfer
-            trace!("Transit Message received: {:?}", transit);
+            // first derive a transit key.
+            let k = w.derive_transit_key(&app_id);
+            println!("Transit Message received: {:?}", transit);
+            w.receive_file(&k, transit);
             "".to_string()
         }
     };

@@ -2,6 +2,8 @@ use magic_wormhole_core::WormholeCore;
 use magic_wormhole_core::{
     APIAction, APIEvent, Action, Code, IOAction, IOEvent, Mood, TimerHandle,
     WSHandle,
+    derive_key,
+    TransitType
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -43,6 +45,7 @@ struct CoreWrapper {
 
     tx_welcome_to_app: Sender<Value>,
     tx_messages_to_app: Sender<Vec<u8>>,
+    tx_key_to_transit: Sender<Vec<u8>>,
     tx_code_to_app: Sender<String>,
     tx_verifier_to_app: Sender<Vec<u8>>,
     tx_versions_to_app: Sender<Value>,
@@ -174,7 +177,7 @@ impl CoreWrapper {
             GotWelcome(w) => self.tx_welcome_to_app.send(w).unwrap(),
             GotMessage(m) => self.tx_messages_to_app.send(m).unwrap(),
             GotCode(c) => self.tx_code_to_app.send(c.to_string()).unwrap(),
-            GotUnverifiedKey(_k) => (),
+            GotUnverifiedKey(k) => self.tx_key_to_transit.send(k.to_vec()).unwrap(),
             GotVerifier(v) => self.tx_verifier_to_app.send(v).unwrap(),
             GotVersions(v) => self.tx_versions_to_app.send(v).unwrap(),
             GotClosed(mood) => self.tx_close_to_app.send(mood).unwrap(),
@@ -234,12 +237,14 @@ pub struct Wormhole {
 
     rx_welcome_from_core: Receiver<Value>,
     rx_messages_from_core: Receiver<Vec<u8>>,
+    rx_key_from_transit: Receiver<Vec<u8>>,
     rx_code_from_core: Receiver<String>,
     rx_verifier_from_core: Receiver<Vec<u8>>,
     rx_versions_from_core: Receiver<Value>,
     rx_close_from_core: Receiver<Mood>,
 
     code: Option<String>,
+    key: Option<Vec<u8>>,
     welcome: Option<Value>,
     versions: Option<Value>,
     verifier: Option<Vec<u8>>,
@@ -254,6 +259,7 @@ impl Wormhole {
         // the inbound messages get their own channel
         let (tx_messages_to_app, rx_messages_from_core) = channel();
         let (tx_welcome_to_app, rx_welcome_from_core) = channel();
+        let (tx_key_to_transit, rx_key_from_transit) = channel();
         let (tx_code_to_app, rx_code_from_core) = channel();
         let (tx_verifier_to_app, rx_verifier_from_core) = channel();
         let (tx_versions_to_app, rx_versions_from_core) = channel();
@@ -267,6 +273,7 @@ impl Wormhole {
             websockets: HashMap::new(),
             tx_welcome_to_app,
             tx_messages_to_app,
+            tx_key_to_transit,
             tx_code_to_app,
             tx_verifier_to_app,
             tx_versions_to_app,
@@ -280,12 +287,14 @@ impl Wormhole {
 
         Wormhole {
             code: None,
+            key: None,
             welcome: None,
             versions: None,
             verifier: None,
             tx_event_to_core,
             rx_messages_from_core,
             rx_welcome_from_core,
+            rx_key_from_transit,
             rx_code_from_core,
             rx_verifier_from_core,
             rx_versions_from_core,
@@ -337,6 +346,27 @@ impl Wormhole {
         }
     }
 
+    pub fn get_key(&mut self) -> Vec<u8> {
+        match self.key {
+            Some(ref key) => key.clone(),
+            None => {
+                let key = self.rx_key_from_transit.recv().unwrap();
+                self.key = Some(key.clone());
+                key
+            }
+        }
+    }
+
+    pub fn derive_transit_key(&mut self, appid: &str) -> Vec<u8> {
+        let key = self.get_key();
+        let mut transit_purpose = appid.to_owned();
+        let const_transit_key_str = "/transit-key";
+        transit_purpose.push_str(const_transit_key_str);
+
+        let length = sodiumoxide::crypto::secretbox::KEYBYTES;
+        derive_key(&key, &transit_purpose.as_bytes().to_vec(), length)
+    }
+
     pub fn get_verifier(&mut self) -> Vec<u8> {
         match self.verifier {
             Some(ref verifier) => verifier.clone(),
@@ -368,5 +398,8 @@ impl Wormhole {
                 welcome
             }
         }
+    }
+
+    pub fn receive_file(&mut self, key: &Vec<u8>, transit: TransitType) {
     }
 }
