@@ -1,9 +1,9 @@
 extern crate hex;
+extern crate sodiumoxide;
 
 use hkdf::Hkdf;
 use serde_json::{self, Value};
 use sha2::{Digest, Sha256};
-use sodiumoxide;
 use sodiumoxide::crypto::secretbox;
 use spake2::{Ed25519Group, Password, Identity, SPAKE2};
 use std::mem;

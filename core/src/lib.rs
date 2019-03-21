@@ -44,6 +44,8 @@ pub use events::{AppID, Code};
 use events::{Event, Events, MySide, Nameplate};
 use util::random_bytes;
 
+pub use key::{derive_key};
+
 pub use api::{
     APIAction, APIEvent, Action, IOAction, IOEvent, InputHelperError, Mood,
     TimerHandle, WSHandle,
