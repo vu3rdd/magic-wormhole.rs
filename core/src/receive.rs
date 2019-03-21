@@ -8,6 +8,7 @@ use events::BossEvent::{
     Scared as B_Scared,
 };
 use events::SendEvent::GotVerifiedKey as S_GotVerifiedKey;
+use api::APIAction;
 
 #[derive(Debug, PartialEq)]
 enum State {
@@ -51,7 +52,7 @@ impl ReceiveMachine {
         use events::ReceiveEvent::*;
         match event {
             GotMessage(..) => panic!(),
-            GotKey(key) => (State::S1UnverifiedKey(key.clone()), events![]),
+            GotKey(key) => (State::S1UnverifiedKey(key.clone()), events![APIAction::GotUnverifiedKey(key)]),
         }
     }
 
