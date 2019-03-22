@@ -57,9 +57,9 @@ pub enum Hints {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub struct DirectType {
-    priority: f32,
-    hostname: String,
-    port: u16,
+    pub priority: f32,
+    pub hostname: String,
+    pub port: u16,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
