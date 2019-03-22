@@ -1,9 +1,18 @@
+extern crate pnet;
+extern crate ipnetwork;
+extern crate serde;
+
 use magic_wormhole_core::WormholeCore;
 use magic_wormhole_core::{
     APIAction, APIEvent, Action, Code, IOAction, IOEvent, Mood, TimerHandle,
     WSHandle,
     derive_key,
-    TransitType
+    TransitType,
+    Hints,
+    DirectType,
+    Abilities,
+    transit,
+    PeerMessage
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -11,7 +20,17 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time;
 use url::Url;
+use std::str;
 use ws;
+use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr};
+use self::serde::Serialize;
+
+use self::pnet::datalink;
+use self::ipnetwork::IpNetwork;
+use self::ipnetwork::IpNetwork::{V4, V6};
+use self::ipnetwork::Ipv4Network;
 
 enum ToCore {
     API(APIEvent),
@@ -400,6 +419,48 @@ impl Wormhole {
         }
     }
 
-    pub fn receive_file(&mut self, key: &Vec<u8>, transit: TransitType) {
+    pub fn receive_file(&mut self, key: &Vec<u8>, ttype: TransitType) {
+        // 1. start a tcp server on a random port
+        let listener = TcpListener::bind("0.0.0.0:0").unwrap();
+        let listen_socket = listener.local_addr().unwrap();
+        let sockaddrs_iter = listen_socket.to_socket_addrs().unwrap();
+        let port = listen_socket.port();
+
+        // 2. send transit message to peer
+        // for now, only direct hints, no relay hints
+        // extract all local addresses other than localhost.
+        let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let ifaces = datalink::interfaces();
+
+        let non_local_ifaces: Vec<&datalink::NetworkInterface> = ifaces.iter().filter(|iface| !datalink::NetworkInterface::is_loopback(iface))
+            .collect();
+        let ips: Vec<IpNetwork> = non_local_ifaces.iter()
+            .map(|iface| iface.ips.clone())
+            .flatten()
+            .filter(|ip| ip.is_ipv4())
+            .collect();
+        println!("ips: {:?}", ips);
+
+        // create abilities and hints
+        let mut hints = Vec::new();
+        hints.push(Hints::DirectTcpV1(DirectType{ priority: 0.0, hostname: ips[0].ip().to_string(), port: port}));
+        let mut abilities = Vec::new();
+        abilities.push(Abilities{ttype: "direct-tcp-v1".to_string()});
+        let transit_msg = transit(abilities, hints).serialize();
+
+        // send the transit message
+        self.send_message(transit_msg.as_bytes());
+        //println!("ips: {:?}", non_local_ifaces);
+        // 3. receive file offer message from peer
+        let msg = self.get_message();
+        let maybe_offer = PeerMessage::deserialize(str::from_utf8(&msg).unwrap());
+        println!("received offer message: {:?}", maybe_offer);
+        // 4. listen for connections on the port and simultaneously try connecting
+        //    peer listening port.
+        // 5. receive encrypted records
+        // 6. verify sha256 sum by sending an ack message to peer along with checksum.
+        // 7. close socket.
+
+        ()
     }
 }
