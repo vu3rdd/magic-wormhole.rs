@@ -16,8 +16,8 @@ pnet = "0.22.0"
 ipnetwork = "*"
 serde = "*"
 
-[target.'cfg(target_os = "android")'.lib]
-crate-type = ["cdylib"]
+[lib]
+crate-type = ["lib", "dylib", "staticlib", "cdylib"]
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.7"
