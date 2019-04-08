@@ -5,9 +5,13 @@ extern crate ws;
 extern crate hex;
 extern crate jni;
 #[macro_use] extern crate log;
+extern crate sha2;
+extern crate sodiumoxide;
 
 #[cfg(target_os = "android")]
 extern crate android_logger;
+
+extern crate byteorder;
 
 use log::Level;
 #[cfg(target_os = "android")]

@@ -54,6 +54,7 @@ pub use transfer::{
     direct_type, error_message, file_ack, message, message_ack,
     offer_directory, offer_file, relay_type, transit, Abilities, AnswerType,
     DirectType, Hints, OfferType, PeerMessage, RelayType, TransitType,
+    transit_ack
 };
 
 pub struct WormholeCore {

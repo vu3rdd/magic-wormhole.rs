@@ -35,6 +35,27 @@ pub enum AnswerType {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+pub struct TransitAck {
+    pub ack: String,
+    pub sha256: String,
+}
+
+
+impl TransitAck {
+    pub fn serialize(&self) -> String {
+        json!(self).to_string()
+    }
+
+    // TODO: This can error out so we should actually have error returning
+    // capability here
+    pub fn deserialize(msg: &str) -> Self {
+        serde_json::from_str(msg).unwrap()
+    }
+}
+
+
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
 pub struct TransitType {
     pub abilities_v1: Vec<Abilities>,
     pub hints_v1: Vec<Hints>,
@@ -97,6 +118,13 @@ pub fn message_ack(msg: &str) -> PeerMessage {
 
 pub fn file_ack(msg: &str) -> PeerMessage {
     PeerMessage::Answer(AnswerType::FileAck(msg.to_string()))
+}
+
+pub fn transit_ack(msg: &str, sha256: &str) -> TransitAck {
+    TransitAck {
+        ack: msg.to_string(),
+        sha256: sha256.to_string()
+    }
 }
 
 pub fn error_message(msg: &str) -> PeerMessage {
@@ -179,6 +207,12 @@ mod test {
     fn test_file_ack() {
         let f1 = file_ack("ok");
         assert_eq!(f1.serialize(), "{\"answer\":{\"file_ack\":\"ok\"}}");
+    }
+
+    #[test]
+    fn test_transit_ack() {
+        let f1 = transit_ack("ok", "deadbeaf");
+        assert_eq!(f1.serialize(), "{\"ack\":\"ok\", \"sha256\":\"deadbeaf\"}");
     }
 
     #[test]
