@@ -577,8 +577,9 @@ impl Wormhole {
     fn receive_records(&mut self, filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
         let mut stream = BufReader::new(tcp_conn);
         let mut hasher = Sha256::default();
-
+        let mut f = File::create(filepath).unwrap();
         let mut remaining_size = filesize as usize;
+
         while remaining_size > 0 {
             println!("remaining size: {:?}", remaining_size);
             // 1. read 4 bytes from the stream. This represents the length of the encrypted packet.
@@ -614,6 +615,7 @@ impl Wormhole {
             ).expect("decryption failed");
 
             println!("decryption succeeded");
+            f.write_all(&plaintext);
             
             // 4. calculate a rolling sha256 sum of the decrypted output.
             hasher.input(&plaintext);
@@ -655,7 +657,7 @@ impl Wormhole {
 
         let nonce_slice: [u8; sodiumoxide::crypto::secretbox::NONCEBYTES]
             = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
-        let mut nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
+        let nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
 
         // encrypt
         let sodium_key = secretbox::Key::from_slice(&key).unwrap();
@@ -750,7 +752,6 @@ impl Wormhole {
         let (skey, rkey) = self.make_record_keys(key);
         
         // exchange handshake
-        //     handshake_exchange(socket: SocketAddr, transit_key: Key, side: Side)
         let tside = self.generate_transit_side();
         println!("{:?}", tside);
 
@@ -769,8 +770,7 @@ impl Wormhole {
         self.send_record(&mut socket.0, &ack_msg);
         
         // 7. close socket.
-
-        ()
+        // well, no need, it gets dropped when it goes out of scope.
     }
 }
 
