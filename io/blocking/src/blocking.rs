@@ -16,7 +16,10 @@ use magic_wormhole_core::{
     transit,
     file_ack,
     PeerMessage,
+    AnswerType,
+    TransitAck,
     transit_ack,
+    offer_file,
     OfferType
 };
 use serde_json::Value;
@@ -517,7 +520,7 @@ impl Wormhole {
 
     // encrypt and send the file to tcp stream and return the sha256 sum
     // of the file before encryption.
-    fn send_file(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
+    fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
         // rough plan:
         // 1. Open the file
         // 2. read a block of N bytes
@@ -541,15 +544,13 @@ impl Wormhole {
         let mut nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
         
         loop {
+            println!("sending records");
             // read a block of 4096 bytes
-            let mut plaintext: [u8; 4096] = [0; 4096];
+            let mut plaintext = [0u8; 4096];
             let n = match file.read(&mut plaintext[..]) {
                 Ok(usize) => usize,
                 Err(why) => panic!("failed to read from file: {}", why.description())
             };
-
-            // sha256 of the input
-            hasher.input(&plaintext);
 
             // encrypt
             let sodium_key = secretbox::Key::from_slice(&skey).unwrap();
@@ -564,6 +565,9 @@ impl Wormhole {
             // increment nonce
             nonce.increment_le_inplace();
 
+            // sha256 of the input
+            hasher.input(&plaintext[..n]);
+
             if n < 4096 {
                 break;
             }
@@ -574,6 +578,49 @@ impl Wormhole {
         hasher.result().to_vec()
     }
 
+    /// receive a packet and return it (encrypted)
+    fn receive_record<T: Read>(&mut self, stream: &mut BufReader<T>, skey: &Vec<u8>) -> Vec<u8> {
+        // 1. read 4 bytes from the stream. This represents the length of the encrypted packet.
+        let mut length_arr: [u8; 4] = [0; 4];
+        stream.read(&mut length_arr[..]);
+        let mut length = u32::from_be_bytes(length_arr);
+        println!("encrypted packet length: {}", length);
+
+        // 2. read that many bytes into an array (or a vector?)
+        let enc_packet_length = length as usize;
+        let mut enc_packet = Vec::with_capacity(enc_packet_length);
+        let mut buf = [0u8; 1024];
+        while length > 0 {
+            let to_read = length.min(buf.len() as u32) as usize;
+            if let Err(_) = stream.read_exact(&mut buf[..to_read]) {
+                panic!("cannot read from the tcp connection");
+            }
+            enc_packet.append(&mut buf.to_vec());
+            length -= to_read as u32;
+        }
+
+        enc_packet.truncate(enc_packet_length);
+        println!("length of the ciphertext: {:?}", enc_packet.len());
+
+        enc_packet
+    }
+
+    fn decrypt_record(&mut self, enc_packet: &Vec<u8>, key: &Vec<u8>) -> Vec<u8> {
+        // 3. decrypt the vector 'enc_packet' with the key.
+        let (nonce, ciphertext) =
+            enc_packet.split_at(sodiumoxide::crypto::secretbox::NONCEBYTES);
+
+        assert_eq!(nonce.len(), sodiumoxide::crypto::secretbox::NONCEBYTES);
+        let plaintext = secretbox::open(
+            &ciphertext,
+            &secretbox::Nonce::from_slice(nonce).expect("nonce unwrap failed"),
+            &secretbox::Key::from_slice(&key).expect("key unwrap failed"),
+        ).expect("decryption failed");
+
+        println!("decryption succeeded");
+        plaintext
+    }
+    
     fn receive_records(&mut self, filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
         let mut stream = BufReader::new(tcp_conn);
         let mut hasher = Sha256::default();
@@ -628,14 +675,43 @@ impl Wormhole {
         hasher.result().to_vec()
     }
 
-    fn handshake_exchange(&mut self, sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
+    fn tx_handshake_exchange(&mut self, sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
+        // send handshake and receive handshake
+        let tx_handshake = self.make_send_handshake(key);
+        let rx_handshake = self.make_receive_handshake(key);
+
+        let tx_handshake_msg = tx_handshake.as_bytes();
+        let rx_handshake_msg = rx_handshake.as_bytes();
+        
+        // for transmit mode, send send_handshake_msg and compare.
+        // the received message with send_handshake_msg
+        self.send_buffer(sock, tx_handshake_msg).unwrap();
+
+        let mut rx: [u8; 89] = [0; 89];
+        self.recv_buffer(sock, &mut rx);
+
+        println!("{:?}", rx_handshake_msg.to_vec().len());
+
+        let mut r_handshake = rx_handshake_msg.to_vec();
+        let go_msg = "go\n".as_bytes();
+        if r_handshake == rx.to_vec() {
+            // send the "go/n" message
+            self.send_buffer(sock, go_msg).unwrap();
+            Ok(())
+        }
+        else {
+            Err("handshake failed".to_string())
+        }
+    }
+
+    fn rx_handshake_exchange(&mut self, sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
         // send handshake and receive handshake
         let send_handshake_msg = self.make_send_handshake(key);
         let rx_handshake = self.make_receive_handshake(key);
         let receive_handshake_msg = rx_handshake.as_bytes();
 
         // for receive mode, send receive_handshake_msg and compare.
-        // the received message with receive_handshake_msg
+        // the received message with send_handshake_msg
         self.send_buffer(sock, receive_handshake_msg).unwrap();
 
         let mut rx: [u8; 90] = [0; 90];
@@ -668,7 +744,132 @@ impl Wormhole {
         
         ciphertext_and_nonce
     }
-    
+
+    pub fn send_file(&mut self, filename: &str, filesize: u32, key: &Vec<u8>) {
+        // 1. start a tcp server on a random port
+        let listener = TcpListener::bind("0.0.0.0:0").unwrap();
+        let listen_socket = listener.local_addr().unwrap();
+        let sockaddrs_iter = listen_socket.to_socket_addrs().unwrap();
+        let port = listen_socket.port();
+
+        // 2. send transit message to peer
+        // for now, only direct hints, no relay hints
+        // extract all local addresses other than localhost.
+        let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+        let ifaces = datalink::interfaces();
+
+        let non_local_ifaces: Vec<&datalink::NetworkInterface> = ifaces.iter().filter(|iface| !datalink::NetworkInterface::is_loopback(iface))
+            .collect();
+        let ips: Vec<IpNetwork> = non_local_ifaces.iter()
+            .map(|iface| iface.ips.clone())
+            .flatten()
+            .filter(|ip| ip.is_ipv4())
+            .collect();
+        println!("ips: {:?}", ips);
+
+        // create abilities and hints
+        let mut hints = Vec::new();
+        hints.push(Hints::DirectTcpV1(DirectType{ priority: 0.0, hostname: ips[0].ip().to_string(), port: port}));
+        let mut abilities = Vec::new();
+        abilities.push(Abilities{ttype: "direct-tcp-v1".to_string()});
+        let transit_msg = transit(abilities, hints).serialize();
+
+        // send the transit message
+        self.send_message(transit_msg.as_bytes());
+
+        // 5. receive transit message from peer.
+        let msg = self.get_message();
+        let maybe_transit = PeerMessage::deserialize(str::from_utf8(&msg).unwrap());
+        println!("received transit message: {:?}", maybe_transit);
+
+        let ttype = match maybe_transit {
+            PeerMessage::Transit(tmsg) => tmsg,
+            _ => panic!("unexpected message: {:?}", maybe_transit),
+        };
+
+        // TODO: combine the two sets of hints.
+        // TODO: implement support for relay hints.
+        
+        // 6. send file offer message.
+        let offer_msg = offer_file(filename, filesize).serialize();
+        self.send_message(offer_msg.as_bytes());
+        
+        // 7. wait for file_ack
+        let maybe_fileack = self.get_message();
+        let fileack_msg = PeerMessage::deserialize(str::from_utf8(&maybe_fileack).unwrap());
+        println!("received file ack message: {:?}", fileack_msg);
+
+        match fileack_msg {
+            PeerMessage::Answer(AnswerType::FileAck(msg)) => {
+                if msg == "ok" {
+                    ()
+                }
+                else {
+                    panic!("file ack failed");
+                }
+            },
+            _ => panic!("did not receive file ack")
+        }
+        
+        // 8. listen for connections on the port and simultaneously try connecting to the peer port.
+        // extract peer's ip/hostname from 'ttype'
+        //let host = "127.0.0.1:8000".parse().unwrap();
+        let direct_hosts: Vec<&DirectType> = ttype.hints_v1.iter()
+            .filter(|hint|
+                    match hint {
+                        Hints::DirectTcpV1(dt) => true,
+                        _ => false,
+                    })
+            .map(|hint|
+                 match hint {
+                     Hints::DirectTcpV1(dt) => dt,
+                     _ => panic!("should not come here"),
+                 })
+            .collect();
+        let relay_hosts: Vec<&Hints> = ttype.hints_v1.iter()
+            .filter(|hint|
+                    match hint {
+                        Hints::RelayV1(rt) => true,
+                        _ => false,
+                    }).collect();
+        // ideally we should try connecting to all the hosts at once
+        // and select the one that succeeded first. For now, we go one
+        // by one.
+        let direct_host = format!("{}:{}", direct_hosts[0].hostname, direct_hosts[0].port).parse().unwrap();
+        println!("peer host: {}", direct_host);
+        let mut socket = self.connect_or_accept(direct_host, listener).unwrap();
+        println!("returned from connect_or_accept");
+
+        // 9. create record keys
+        let (skey, rkey) = self.make_record_keys(key);
+
+        // 10. exchange handshake over tcp
+        let tside = self.generate_transit_side();
+
+        self.tx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
+        // 11. send the file as encrypted records.
+        // fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8>
+        println!("handshake successful");
+        let checksum = self.send_records(filename, &mut socket.0, &skey);
+
+        // 13. wait for the transit ack with sha256 sum from the peer.
+        let enc_transit_ack = self.receive_record(&mut BufReader::new(socket.0), &skey);
+        let transit_ack = self.decrypt_record(&enc_transit_ack, &rkey);
+        
+        let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
+        match transit_ack_msg {
+            TransitAck{ack, sha256} => {
+                if sha256 == hex::encode(checksum) {
+                    println!("transfer complete!");
+                }
+                else {
+                    panic!("receive checksum error");
+                }
+            },
+            _ => panic!("could not parse the message"),
+        }
+    }
+
     pub fn receive_file(&mut self, key: &Vec<u8>, ttype: TransitType) {
         // 1. start a tcp server on a random port
         let listener = TcpListener::bind("0.0.0.0:0").unwrap();
@@ -755,11 +956,11 @@ impl Wormhole {
         let tside = self.generate_transit_side();
         println!("{:?}", tside);
 
-        self.handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
+        self.rx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
         
         // 5. receive encrypted records
-        // now skey and rkey can be used to encrypt and decrypt records
-        // &mut self, filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey: &Vec<u8>)
+        // now skey and rkey can be used. skey is used by the tx side, rkey is used
+        // by the rx side for symmetric encryption.
         let checksum = self.receive_records(&filename, filesize, &mut socket.0, &skey);
 
         let sha256sum = hex::encode(checksum.as_slice());

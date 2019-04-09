@@ -24,6 +24,15 @@ use std::str;
 pub use blocking::*;
 use std::panic;
 
+#[derive(Debug, PartialEq)]
+pub enum MessageType {
+    Message(String),
+    File {
+        filename: String,
+        filesize: u32,
+    }
+}
+
 // This is the interface to the JVM that we'll call the majority of our
 // methods on.
 use jni::JNIEnv;
@@ -47,22 +56,30 @@ pub fn get_code(w: &mut Wormhole) -> String {
     w.get_code()
 }
 
-pub fn send(w: &mut Wormhole, code: String, msg: String) {
-    w.send_message(message(&msg).serialize().as_bytes());
-    println!("sent..");
-    // if we close right away, we won't actually send anything. Wait for at
-    // least the verifier to be printed, that ought to give our outbound
-    // message a chance to be delivered.
-    let verifier = w.get_verifier();
-    println!("verifier: {}", hex::encode(verifier));
-    println!("got verifier, closing..");
-    w.close();
-    println!("closed");
+pub fn send(w: &mut Wormhole, app_id: String, code: String, msg: MessageType) {
+    match msg {
+        MessageType::Message(text) => {
+            w.send_message(message(&text).serialize().as_bytes());
+            println!("sent..");
+            // if we close right away, we won't actually send anything. Wait for at
+            // least the verifier to be printed, that ought to give our outbound
+            // message a chance to be delivered.
+            let verifier = w.get_verifier();
+            println!("verifier: {}", hex::encode(verifier));
+            println!("got verifier, closing..");
+            w.close();
+            println!("closed");
+        },
+        MessageType::File{filename, filesize} => {
+            let k = w.derive_transit_key(&app_id);
+            w.send_file(&filename, filesize, &k);
+        }
+    }
 }
 
 pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
     trace!("connecting..");
-    let mut w = connect(app_id.clone(), mailbox_server); //Wormhole::new(&app_id, &mailbox_server);
+    let mut w = connect(app_id.clone(), mailbox_server);
     w.set_code(&code);
     let verifier = w.get_verifier();
     trace!("verifier: {}", hex::encode(verifier));
@@ -115,6 +132,7 @@ pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
 
 #[no_mangle]
 #[allow(non_snake_case)]
+#[cfg(target_os = "android")]
 pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive(env: JNIEnv,
                                                                                  _class: JClass,
                                                                                  server: JString,
@@ -154,6 +172,7 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_receive
 #[no_mangle]
 #[allow(non_snake_case)]
 #[cfg(target_os = "android")]
+#[cfg(target_os = "android")]
 pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_init(_env: JNIEnv,
                                                                               _class: JClass) {
     android_logger::init_once(
@@ -163,6 +182,7 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_init(_e
 
 #[no_mangle]
 #[allow(non_snake_case)]
+#[cfg(target_os = "android")]
 pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_connect(env: JNIEnv,
                                                                                  _class: JClass,
                                                                                  appid: JString,
@@ -178,6 +198,7 @@ pub extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_connect
 
 #[no_mangle]
 #[allow(non_snake_case)]
+#[cfg(target_os = "android")]
 pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_getcode(env: JNIEnv,
                                                                                         _class: JClass,
                                                                                         ptr: jlong)
@@ -193,6 +214,7 @@ pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_
 
 #[no_mangle]
 #[allow(non_snake_case)]
+#[cfg(target_os = "android")]
 pub unsafe extern "system" fn Java_com_leastauthority_wormhole_WormholeActivity_send(env: JNIEnv,
                                                                                      _class: JClass,
                                                                                      ptr: jlong,
