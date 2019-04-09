@@ -552,15 +552,10 @@ impl Wormhole {
                 Err(why) => panic!("failed to read from file: {}", why.description())
             };
 
-            // encrypt
-            let sodium_key = secretbox::Key::from_slice(&skey).unwrap();
-            let ciphertext = secretbox::seal(&plaintext, &nonce, &sodium_key);
-            let mut ciphertext_and_nonce = Vec::new();
-            ciphertext_and_nonce.extend(nonce.as_ref().to_vec());
-            ciphertext_and_nonce.extend(ciphertext);
+            let ciphertext = self.encrypt_record(&plaintext.to_vec(), nonce, &skey);
 
             // send the encrypted record
-            self.send_record(stream, &ciphertext_and_nonce);
+            self.send_record(stream, &ciphertext);
 
             // increment nonce
             nonce.increment_le_inplace();
@@ -603,6 +598,16 @@ impl Wormhole {
         println!("length of the ciphertext: {:?}", enc_packet.len());
 
         enc_packet
+    }
+
+    fn encrypt_record(&mut self, plaintext: &Vec<u8>, nonce: secretbox::Nonce, key: &Vec<u8>) -> Vec<u8> {
+        let sodium_key = secretbox::Key::from_slice(&key).unwrap();
+        let ciphertext = secretbox::seal(plaintext, &nonce, &sodium_key);
+        let mut ciphertext_and_nonce = Vec::new();
+        ciphertext_and_nonce.extend(nonce.as_ref().to_vec());
+        ciphertext_and_nonce.extend(ciphertext.clone());
+
+        ciphertext_and_nonce
     }
 
     fn decrypt_record(&mut self, enc_packet: &Vec<u8>, key: &Vec<u8>) -> Vec<u8> {
@@ -735,14 +740,7 @@ impl Wormhole {
             = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
         let nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
 
-        // encrypt
-        let sodium_key = secretbox::Key::from_slice(&key).unwrap();
-        let ciphertext = secretbox::seal(&plaintext.as_bytes(), &nonce, &sodium_key);
-        let mut ciphertext_and_nonce = Vec::new();
-        ciphertext_and_nonce.extend(nonce.as_ref().to_vec());
-        ciphertext_and_nonce.extend(ciphertext.clone());
-        
-        ciphertext_and_nonce
+        self.encrypt_record(&plaintext.as_bytes().to_vec(), nonce, &key)
     }
 
     pub fn send_file(&mut self, filename: &str, filesize: u32, key: &Vec<u8>) {
