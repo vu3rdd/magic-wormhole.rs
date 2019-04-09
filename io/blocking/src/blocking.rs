@@ -574,7 +574,7 @@ impl Wormhole {
     }
 
     /// receive a packet and return it (encrypted)
-    fn receive_record<T: Read>(&mut self, stream: &mut BufReader<T>, skey: &Vec<u8>) -> Vec<u8> {
+    fn receive_record<T: Read>(&mut self, stream: &mut BufReader<T>) -> Vec<u8> {
         // 1. read 4 bytes from the stream. This represents the length of the encrypted packet.
         let mut length_arr: [u8; 4] = [0; 4];
         stream.read(&mut length_arr[..]);
@@ -634,37 +634,14 @@ impl Wormhole {
 
         while remaining_size > 0 {
             println!("remaining size: {:?}", remaining_size);
-            // 1. read 4 bytes from the stream. This represents the length of the encrypted packet.
-            let mut length_arr: [u8; 4] = [0; 4];
-            stream.read(&mut length_arr[..]);
-            let mut length = u32::from_be_bytes(length_arr);
-            println!("encrypted packet length: {}", length);
 
-            // 2. read that many bytes into an array (or a vector?)
-            let enc_packet_length = length as usize;
-            let mut enc_packet = Vec::with_capacity(enc_packet_length);
-            let mut buf = [0u8; 1024];
-            while length > 0 {
-                let to_read = length.min(buf.len() as u32) as usize;
-                if let Err(_) = stream.read_exact(&mut buf[..to_read]) {
-                    panic!("cannot read from the tcp connection");
-                }
-                enc_packet.append(&mut buf.to_vec());
-                length -= to_read as u32;
-            }
+            let enc_packet = self.receive_record(&mut stream);
 
-            enc_packet.truncate(enc_packet_length);
+            // enc_packet.truncate(enc_packet_length);
             println!("length of the ciphertext: {:?}", enc_packet.len());
             
             // 3. decrypt the vector 'enc_packet' with the key.
-            let (nonce, ciphertext) =
-                enc_packet.split_at(sodiumoxide::crypto::secretbox::NONCEBYTES);
-            assert_eq!(nonce.len(), sodiumoxide::crypto::secretbox::NONCEBYTES);
-            let plaintext = secretbox::open(
-                &ciphertext,
-                &secretbox::Nonce::from_slice(nonce).expect("nonce unwrap failed"),
-                &secretbox::Key::from_slice(&skey).expect("key unwrap failed"),
-            ).expect("decryption failed");
+            let plaintext = self.decrypt_record(&enc_packet, &skey);
 
             println!("decryption succeeded");
             f.write_all(&plaintext);
@@ -851,7 +828,7 @@ impl Wormhole {
         let checksum = self.send_records(filename, &mut socket.0, &skey);
 
         // 13. wait for the transit ack with sha256 sum from the peer.
-        let enc_transit_ack = self.receive_record(&mut BufReader::new(socket.0), &skey);
+        let enc_transit_ack = self.receive_record(&mut BufReader::new(socket.0));
         let transit_ack = self.decrypt_record(&enc_transit_ack, &rkey);
         
         let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
