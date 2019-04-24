@@ -459,34 +459,6 @@ impl Wormhole {
         (sender, receiver)
     }
 
-    fn connect_or_accept(&mut self, addr: SocketAddr, listener: TcpListener) -> Result<(TcpStream, SocketAddr), std::io::Error> {
-        let listen_socket = thread::spawn(move || {
-            listener.accept()
-        });
-        
-        let connect_socket = thread::spawn(move || {
-            let tcp_stream = TcpStream::connect(addr);
-            match tcp_stream {
-                Ok(stream) => Ok((stream, addr)),
-                Err(e) => Err(e)
-            }
-        });
-        
-        // let listen_sock_out = listen_socket.join();
-        // if listen_sock_out.is_ok() {
-        //     println!("connected via listening socket");
-        //     listen_sock_out.unwrap()
-        // }
-        // else {
-        println!("connected via sending socket");
-        connect_socket.join().unwrap()
-    }
-
-    fn generate_transit_side(&mut self) -> String {
-        let x: [u8; 8] = rand::random();
-        hex::encode(x)
-    }
-
     fn send_buffer(&mut self, stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
         stream.write(buf)
     }
@@ -552,7 +524,7 @@ impl Wormhole {
                 Err(why) => panic!("failed to read from file: {}", why.description())
             };
 
-            let ciphertext = self.encrypt_record(&plaintext.to_vec(), nonce, &skey);
+            let ciphertext = encrypt_record(&plaintext.to_vec(), nonce, &skey);
 
             // send the encrypted record
             self.send_record(stream, &ciphertext);
@@ -570,90 +542,6 @@ impl Wormhole {
                 continue;
             }
         }
-        hasher.result().to_vec()
-    }
-
-    /// receive a packet and return it (encrypted)
-    fn receive_record<T: Read>(&mut self, stream: &mut BufReader<T>) -> Vec<u8> {
-        // 1. read 4 bytes from the stream. This represents the length of the encrypted packet.
-        let mut length_arr: [u8; 4] = [0; 4];
-        stream.read(&mut length_arr[..]);
-        let mut length = u32::from_be_bytes(length_arr);
-        println!("encrypted packet length: {}", length);
-
-        // 2. read that many bytes into an array (or a vector?)
-        let enc_packet_length = length as usize;
-        let mut enc_packet = Vec::with_capacity(enc_packet_length);
-        let mut buf = [0u8; 1024];
-        while length > 0 {
-            let to_read = length.min(buf.len() as u32) as usize;
-            if let Err(_) = stream.read_exact(&mut buf[..to_read]) {
-                panic!("cannot read from the tcp connection");
-            }
-            enc_packet.append(&mut buf.to_vec());
-            length -= to_read as u32;
-        }
-
-        enc_packet.truncate(enc_packet_length);
-        println!("length of the ciphertext: {:?}", enc_packet.len());
-
-        enc_packet
-    }
-
-    fn encrypt_record(&mut self, plaintext: &Vec<u8>, nonce: secretbox::Nonce, key: &Vec<u8>) -> Vec<u8> {
-        let sodium_key = secretbox::Key::from_slice(&key).unwrap();
-        let ciphertext = secretbox::seal(plaintext, &nonce, &sodium_key);
-        let mut ciphertext_and_nonce = Vec::new();
-        ciphertext_and_nonce.extend(nonce.as_ref().to_vec());
-        ciphertext_and_nonce.extend(ciphertext.clone());
-
-        ciphertext_and_nonce
-    }
-
-    fn decrypt_record(&mut self, enc_packet: &Vec<u8>, key: &Vec<u8>) -> Vec<u8> {
-        // 3. decrypt the vector 'enc_packet' with the key.
-        let (nonce, ciphertext) =
-            enc_packet.split_at(sodiumoxide::crypto::secretbox::NONCEBYTES);
-
-        assert_eq!(nonce.len(), sodiumoxide::crypto::secretbox::NONCEBYTES);
-        let plaintext = secretbox::open(
-            &ciphertext,
-            &secretbox::Nonce::from_slice(nonce).expect("nonce unwrap failed"),
-            &secretbox::Key::from_slice(&key).expect("key unwrap failed"),
-        ).expect("decryption failed");
-
-        println!("decryption succeeded");
-        plaintext
-    }
-    
-    fn receive_records(&mut self, filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
-        let mut stream = BufReader::new(tcp_conn);
-        let mut hasher = Sha256::default();
-        let mut f = File::create(filepath).unwrap();
-        let mut remaining_size = filesize as usize;
-
-        while remaining_size > 0 {
-            println!("remaining size: {:?}", remaining_size);
-
-            let enc_packet = self.receive_record(&mut stream);
-
-            // enc_packet.truncate(enc_packet_length);
-            println!("length of the ciphertext: {:?}", enc_packet.len());
-            
-            // 3. decrypt the vector 'enc_packet' with the key.
-            let plaintext = self.decrypt_record(&enc_packet, &skey);
-
-            println!("decryption succeeded");
-            f.write_all(&plaintext);
-            
-            // 4. calculate a rolling sha256 sum of the decrypted output.
-            hasher.input(&plaintext);
-
-            remaining_size -= plaintext.len();
-        }
-
-        println!("done");
-        // TODO: 5. write the buffer into a file.
         hasher.result().to_vec()
     }
 
@@ -717,7 +605,7 @@ impl Wormhole {
             = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
         let nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
 
-        self.encrypt_record(&plaintext.as_bytes().to_vec(), nonce, &key)
+        encrypt_record(&plaintext.as_bytes().to_vec(), nonce, &key)
     }
 
     pub fn send_file(&mut self, filename: &str, filesize: u32, key: &Vec<u8>) {
@@ -812,14 +700,14 @@ impl Wormhole {
         // by one.
         let direct_host = format!("{}:{}", direct_hosts[0].hostname, direct_hosts[0].port).parse().unwrap();
         println!("peer host: {}", direct_host);
-        let mut socket = self.connect_or_accept(direct_host, listener).unwrap();
+        let mut socket = connect_or_accept(direct_host, listener).unwrap();
         println!("returned from connect_or_accept");
 
         // 9. create record keys
         let (skey, rkey) = self.make_record_keys(key);
 
         // 10. exchange handshake over tcp
-        let tside = self.generate_transit_side();
+        let tside = generate_transit_side();
 
         self.tx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
         // 11. send the file as encrypted records.
@@ -828,8 +716,8 @@ impl Wormhole {
         let checksum = self.send_records(filename, &mut socket.0, &skey);
 
         // 13. wait for the transit ack with sha256 sum from the peer.
-        let enc_transit_ack = self.receive_record(&mut BufReader::new(socket.0));
-        let transit_ack = self.decrypt_record(&enc_transit_ack, &rkey);
+        let enc_transit_ack = receive_record(&mut BufReader::new(socket.0));
+        let transit_ack = decrypt_record(&enc_transit_ack, &rkey);
         
         let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
         match transit_ack_msg {
@@ -922,13 +810,13 @@ impl Wormhole {
         // by one.
         let direct_host = format!("{}:{}", direct_hosts[0].hostname, direct_hosts[0].port).parse().unwrap();
         println!("peer host: {}", direct_host);
-        let mut socket = self.connect_or_accept(direct_host, listener).unwrap();
+        let mut socket = connect_or_accept(direct_host, listener).unwrap();
         println!("returned from connect_or_accept");
         // create record keys
         let (skey, rkey) = self.make_record_keys(key);
         
         // exchange handshake
-        let tside = self.generate_transit_side();
+        let tside = generate_transit_side();
         println!("{:?}", tside);
 
         self.rx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
@@ -936,7 +824,7 @@ impl Wormhole {
         // 5. receive encrypted records
         // now skey and rkey can be used. skey is used by the tx side, rkey is used
         // by the rx side for symmetric encryption.
-        let checksum = self.receive_records(&filename, filesize, &mut socket.0, &skey);
+        let checksum = receive_records(&filename, filesize, &mut socket.0, &skey);
 
         let sha256sum = hex::encode(checksum.as_slice());
         println!("sha256 sum: {:?}", sha256sum);
@@ -950,4 +838,114 @@ impl Wormhole {
     }
 }
 
+fn generate_transit_side() -> String {
+    let x: [u8; 8] = rand::random();
+    hex::encode(x)
+}
 
+fn connect_or_accept(addr: SocketAddr, listener: TcpListener) -> Result<(TcpStream, SocketAddr), std::io::Error> {
+    let listen_socket = thread::spawn(move || {
+        listener.accept()
+    });
+
+    let connect_socket = thread::spawn(move || {
+        let tcp_stream = TcpStream::connect(addr);
+        match tcp_stream {
+            Ok(stream) => Ok((stream, addr)),
+            Err(e) => Err(e)
+        }
+    });
+
+    // let listen_sock_out = listen_socket.join();
+    // if listen_sock_out.is_ok() {
+    //     println!("connected via listening socket");
+    //     listen_sock_out.unwrap()
+    // }
+    // else {
+    println!("connected via sending socket");
+    connect_socket.join().unwrap()
+}
+
+fn encrypt_record(plaintext: &Vec<u8>, nonce: secretbox::Nonce, key: &Vec<u8>) -> Vec<u8> {
+    let sodium_key = secretbox::Key::from_slice(&key).unwrap();
+    let ciphertext = secretbox::seal(plaintext, &nonce, &sodium_key);
+    let mut ciphertext_and_nonce = Vec::new();
+    ciphertext_and_nonce.extend(nonce.as_ref().to_vec());
+    ciphertext_and_nonce.extend(ciphertext.clone());
+
+    ciphertext_and_nonce
+}
+
+fn decrypt_record(enc_packet: &Vec<u8>, key: &Vec<u8>) -> Vec<u8> {
+    // 3. decrypt the vector 'enc_packet' with the key.
+    let (nonce, ciphertext) =
+        enc_packet.split_at(sodiumoxide::crypto::secretbox::NONCEBYTES);
+
+    assert_eq!(nonce.len(), sodiumoxide::crypto::secretbox::NONCEBYTES);
+    let plaintext = secretbox::open(
+        &ciphertext,
+        &secretbox::Nonce::from_slice(nonce).expect("nonce unwrap failed"),
+        &secretbox::Key::from_slice(&key).expect("key unwrap failed"),
+    ).expect("decryption failed");
+
+    println!("decryption succeeded");
+    plaintext
+}
+
+/// receive a packet and return it (encrypted)
+fn receive_record<T: Read>(stream: &mut BufReader<T>) -> Vec<u8> {
+    // 1. read 4 bytes from the stream. This represents the length of the encrypted packet.
+    let mut length_arr: [u8; 4] = [0; 4];
+    stream.read(&mut length_arr[..]);
+    let mut length = u32::from_be_bytes(length_arr);
+    println!("encrypted packet length: {}", length);
+
+    // 2. read that many bytes into an array (or a vector?)
+    let enc_packet_length = length as usize;
+    let mut enc_packet = Vec::with_capacity(enc_packet_length);
+    let mut buf = [0u8; 1024];
+    while length > 0 {
+        let to_read = length.min(buf.len() as u32) as usize;
+        if let Err(_) = stream.read_exact(&mut buf[..to_read]) {
+            panic!("cannot read from the tcp connection");
+        }
+        enc_packet.append(&mut buf.to_vec());
+        length -= to_read as u32;
+    }
+
+    enc_packet.truncate(enc_packet_length);
+    println!("length of the ciphertext: {:?}", enc_packet.len());
+
+    enc_packet
+}
+
+fn receive_records(filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
+    let mut stream = BufReader::new(tcp_conn);
+    let mut hasher = Sha256::default();
+    let mut f = File::create(filepath).unwrap();
+    let mut remaining_size = filesize as usize;
+
+    while remaining_size > 0 {
+        println!("remaining size: {:?}", remaining_size);
+
+        let enc_packet = receive_record(&mut stream);
+
+        // enc_packet.truncate(enc_packet_length);
+        println!("length of the ciphertext: {:?}", enc_packet.len());
+
+        // 3. decrypt the vector 'enc_packet' with the key.
+        let plaintext = decrypt_record(&enc_packet, &skey);
+
+        println!("decryption succeeded");
+        f.write_all(&plaintext);
+
+        // 4. calculate a rolling sha256 sum of the decrypted output.
+        hasher.input(&plaintext);
+
+        remaining_size -= plaintext.len();
+    }
+
+    println!("done");
+    // TODO: 5. write the buffer into a file.
+    hasher.result().to_vec()
+}
