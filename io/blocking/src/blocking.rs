@@ -411,11 +411,6 @@ impl Wormhole {
         derive_key(&key, &transit_purpose.as_bytes().to_vec(), length)
     }
 
-    pub fn derive_key_from_purpose(&mut self, key: &Vec<u8>, purpose: &str) -> Vec<u8> {
-        let length = sodiumoxide::crypto::secretbox::KEYBYTES;
-        derive_key(key, &purpose.as_bytes().to_vec(), length)
-    }
-
     pub fn get_verifier(&mut self) -> Vec<u8> {
         match self.verifier {
             Some(ref verifier) => verifier.clone(),
@@ -447,165 +442,6 @@ impl Wormhole {
                 welcome
             }
         }
-    }
-
-    fn make_record_keys(&mut self, key: &Vec<u8>) -> (Vec<u8>, Vec<u8>) {
-        let s_purpose = "transit_record_sender_key";
-        let r_purpose = "transit_record_receiver_key";
-
-        let sender = self.derive_key_from_purpose(key, s_purpose);
-        let receiver = self.derive_key_from_purpose(key, r_purpose);
-
-        (sender, receiver)
-    }
-
-    fn send_buffer(&mut self, stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
-        stream.write(buf)
-    }
-
-    fn send_record(&mut self, stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
-        let buf_length: u32 = buf.len() as u32;
-        let buf_length_array: [u8; 4] = buf_length.to_be_bytes();
-        stream.write_all(&buf_length_array[..]);
-        stream.write(buf)
-    }
-    
-    fn recv_buffer(&mut self, stream: &mut TcpStream, buf: &mut [u8]) -> io::Result<()> {
-        stream.read_exact(buf)
-    }
-
-    fn make_receive_handshake(&mut self, key: &Vec<u8>) -> String {
-        let purpose = "transit_receiver";
-        let sub_key = self.derive_key_from_purpose(key, purpose);
-
-        let msg = format!("transit receiver {} ready\n\n", hex::encode(sub_key));
-        msg
-    }
-
-    fn make_send_handshake(&mut self, key: &Vec<u8>) -> String {
-        let purpose = "transit_sender";
-        let sub_key = self.derive_key_from_purpose(key, purpose);
-
-        let msg = format!("transit sender {} ready\n\n", hex::encode(sub_key));
-        msg
-    }
-
-    // encrypt and send the file to tcp stream and return the sha256 sum
-    // of the file before encryption.
-    fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
-        // rough plan:
-        // 1. Open the file
-        // 2. read a block of N bytes
-        // 3. calculate a rolling sha256sum.
-        // 4. AEAD with skey and with nonce as a counter from 0.
-        // 5. send the encrypted buffer to the socket.
-        // 6. go to step #2 till eof.
-        // 7. if eof, return sha256 sum.
-
-        let path = Path::new(filepath);
-
-        let mut file = match File::open(&path) {
-            Err(why) => panic!("Could not open {}: {}", path.display(), why.description()),
-            Ok(f) => f
-        };
-
-        let mut hasher = Sha256::default();
-
-        let nonce_slice: [u8; sodiumoxide::crypto::secretbox::NONCEBYTES]
-            = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
-        let mut nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
-        
-        loop {
-            println!("sending records");
-            // read a block of 4096 bytes
-            let mut plaintext = [0u8; 4096];
-            let n = match file.read(&mut plaintext[..]) {
-                Ok(usize) => usize,
-                Err(why) => panic!("failed to read from file: {}", why.description())
-            };
-
-            let ciphertext = encrypt_record(&plaintext.to_vec(), nonce, &skey);
-
-            // send the encrypted record
-            self.send_record(stream, &ciphertext);
-
-            // increment nonce
-            nonce.increment_le_inplace();
-
-            // sha256 of the input
-            hasher.input(&plaintext[..n]);
-
-            if n < 4096 {
-                break;
-            }
-            else {
-                continue;
-            }
-        }
-        hasher.result().to_vec()
-    }
-
-    fn tx_handshake_exchange(&mut self, sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
-        // send handshake and receive handshake
-        let tx_handshake = self.make_send_handshake(key);
-        let rx_handshake = self.make_receive_handshake(key);
-
-        let tx_handshake_msg = tx_handshake.as_bytes();
-        let rx_handshake_msg = rx_handshake.as_bytes();
-        
-        // for transmit mode, send send_handshake_msg and compare.
-        // the received message with send_handshake_msg
-        self.send_buffer(sock, tx_handshake_msg).unwrap();
-
-        let mut rx: [u8; 89] = [0; 89];
-        self.recv_buffer(sock, &mut rx);
-
-        println!("{:?}", rx_handshake_msg.to_vec().len());
-
-        let mut r_handshake = rx_handshake_msg.to_vec();
-        let go_msg = "go\n".as_bytes();
-        if r_handshake == rx.to_vec() {
-            // send the "go/n" message
-            self.send_buffer(sock, go_msg).unwrap();
-            Ok(())
-        }
-        else {
-            Err("handshake failed".to_string())
-        }
-    }
-
-    fn rx_handshake_exchange(&mut self, sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
-        // send handshake and receive handshake
-        let send_handshake_msg = self.make_send_handshake(key);
-        let rx_handshake = self.make_receive_handshake(key);
-        let receive_handshake_msg = rx_handshake.as_bytes();
-
-        // for receive mode, send receive_handshake_msg and compare.
-        // the received message with send_handshake_msg
-        self.send_buffer(sock, receive_handshake_msg).unwrap();
-
-        let mut rx: [u8; 90] = [0; 90];
-        self.recv_buffer(sock, &mut rx);
-
-        let mut s_handshake = send_handshake_msg.as_bytes().to_vec();
-        let go_msg = "go\n".as_bytes();
-        s_handshake.append(&mut go_msg.to_vec());
-        if s_handshake == rx.to_vec() {
-            Ok(())
-        }
-        else {
-            Err("handshake failed".to_string())
-        }
-    }
-
-    fn make_transit_ack_msg(&mut self, sha256: &str, key: &Vec<u8>) -> Vec<u8> {
-        let plaintext = transit_ack("ok", sha256).serialize();
-
-        let nonce_slice: [u8; sodiumoxide::crypto::secretbox::NONCEBYTES]
-            = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
-        let nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
-
-        encrypt_record(&plaintext.as_bytes().to_vec(), nonce, &key)
     }
 
     pub fn send_file(&mut self, filename: &str, filesize: u32, key: &Vec<u8>) {
@@ -704,16 +540,16 @@ impl Wormhole {
         println!("returned from connect_or_accept");
 
         // 9. create record keys
-        let (skey, rkey) = self.make_record_keys(key);
+        let (skey, rkey) = make_record_keys(key);
 
         // 10. exchange handshake over tcp
         let tside = generate_transit_side();
 
-        self.tx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
+        tx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
         // 11. send the file as encrypted records.
         // fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8>
         println!("handshake successful");
-        let checksum = self.send_records(filename, &mut socket.0, &skey);
+        let checksum = send_records(filename, &mut socket.0, &skey);
 
         // 13. wait for the transit ack with sha256 sum from the peer.
         let enc_transit_ack = receive_record(&mut BufReader::new(socket.0));
@@ -813,13 +649,13 @@ impl Wormhole {
         let mut socket = connect_or_accept(direct_host, listener).unwrap();
         println!("returned from connect_or_accept");
         // create record keys
-        let (skey, rkey) = self.make_record_keys(key);
+        let (skey, rkey) = make_record_keys(key);
         
         // exchange handshake
         let tside = generate_transit_side();
         println!("{:?}", tside);
 
-        self.rx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
+        rx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
         
         // 5. receive encrypted records
         // now skey and rkey can be used. skey is used by the tx side, rkey is used
@@ -830,12 +666,22 @@ impl Wormhole {
         println!("sha256 sum: {:?}", sha256sum);
         
         // 6. verify sha256 sum by sending an ack message to peer along with checksum.
-        let ack_msg = self.make_transit_ack_msg(&sha256sum, &rkey);
-        self.send_record(&mut socket.0, &ack_msg);
+        let ack_msg = make_transit_ack_msg(&sha256sum, &rkey);
+        send_record(&mut socket.0, &ack_msg);
         
         // 7. close socket.
         // well, no need, it gets dropped when it goes out of scope.
     }
+}
+
+fn make_transit_ack_msg(sha256: &str, key: &Vec<u8>) -> Vec<u8> {
+    let plaintext = transit_ack("ok", sha256).serialize();
+
+    let nonce_slice: [u8; sodiumoxide::crypto::secretbox::NONCEBYTES]
+        = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
+    let nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
+
+    encrypt_record(&plaintext.as_bytes().to_vec(), nonce, &key)
 }
 
 fn generate_transit_side() -> String {
@@ -947,5 +793,159 @@ fn receive_records(filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey
 
     println!("done");
     // TODO: 5. write the buffer into a file.
+    hasher.result().to_vec()
+}
+
+pub fn derive_key_from_purpose(key: &Vec<u8>, purpose: &str) -> Vec<u8> {
+    let length = sodiumoxide::crypto::secretbox::KEYBYTES;
+    derive_key(key, &purpose.as_bytes().to_vec(), length)
+}
+
+fn make_record_keys(key: &Vec<u8>) -> (Vec<u8>, Vec<u8>) {
+    let s_purpose = "transit_record_sender_key";
+    let r_purpose = "transit_record_receiver_key";
+
+    let sender = derive_key_from_purpose(key, s_purpose);
+    let receiver = derive_key_from_purpose(key, r_purpose);
+
+    (sender, receiver)
+}
+
+fn send_buffer(stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
+    stream.write(buf)
+}
+
+fn send_record(stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
+    let buf_length: u32 = buf.len() as u32;
+    let buf_length_array: [u8; 4] = buf_length.to_be_bytes();
+    stream.write_all(&buf_length_array[..]);
+    stream.write(buf)
+}
+    
+fn recv_buffer(stream: &mut TcpStream, buf: &mut [u8]) -> io::Result<()> {
+    stream.read_exact(buf)
+}
+
+fn make_receive_handshake(key: &Vec<u8>) -> String {
+    let purpose = "transit_receiver";
+    let sub_key = derive_key_from_purpose(key, purpose);
+
+    let msg = format!("transit receiver {} ready\n\n", hex::encode(sub_key));
+    msg
+}
+
+fn make_send_handshake(key: &Vec<u8>) -> String {
+    let purpose = "transit_sender";
+    let sub_key = derive_key_from_purpose(key, purpose);
+
+    let msg = format!("transit sender {} ready\n\n", hex::encode(sub_key));
+    msg
+}
+
+fn tx_handshake_exchange(sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
+    // send handshake and receive handshake
+    let tx_handshake = make_send_handshake(key);
+    let rx_handshake = make_receive_handshake(key);
+
+    let tx_handshake_msg = tx_handshake.as_bytes();
+    let rx_handshake_msg = rx_handshake.as_bytes();
+        
+    // for transmit mode, send send_handshake_msg and compare.
+    // the received message with send_handshake_msg
+    send_buffer(sock, tx_handshake_msg).unwrap();
+
+    let mut rx: [u8; 89] = [0; 89];
+    recv_buffer(sock, &mut rx);
+
+    println!("{:?}", rx_handshake_msg.to_vec().len());
+
+    let mut r_handshake = rx_handshake_msg.to_vec();
+    let go_msg = "go\n".as_bytes();
+    if r_handshake == rx.to_vec() {
+        // send the "go/n" message
+        send_buffer(sock, go_msg).unwrap();
+        Ok(())
+    }
+    else {
+        Err("handshake failed".to_string())
+    }
+}
+
+fn rx_handshake_exchange(sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
+    // send handshake and receive handshake
+    let send_handshake_msg = make_send_handshake(key);
+    let rx_handshake = make_receive_handshake(key);
+    let receive_handshake_msg = rx_handshake.as_bytes();
+
+    // for receive mode, send receive_handshake_msg and compare.
+    // the received message with send_handshake_msg
+    send_buffer(sock, receive_handshake_msg).unwrap();
+
+    let mut rx: [u8; 90] = [0; 90];
+    recv_buffer(sock, &mut rx);
+
+    let mut s_handshake = send_handshake_msg.as_bytes().to_vec();
+    let go_msg = "go\n".as_bytes();
+    s_handshake.append(&mut go_msg.to_vec());
+    if s_handshake == rx.to_vec() {
+        Ok(())
+    }
+    else {
+        Err("handshake failed".to_string())
+    }
+}
+
+// encrypt and send the file to tcp stream and return the sha256 sum
+// of the file before encryption.
+fn send_records(filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8> {
+    // rough plan:
+    // 1. Open the file
+    // 2. read a block of N bytes
+    // 3. calculate a rolling sha256sum.
+    // 4. AEAD with skey and with nonce as a counter from 0.
+    // 5. send the encrypted buffer to the socket.
+    // 6. go to step #2 till eof.
+    // 7. if eof, return sha256 sum.
+
+    let path = Path::new(filepath);
+
+    let mut file = match File::open(&path) {
+        Err(why) => panic!("Could not open {}: {}", path.display(), why.description()),
+        Ok(f) => f
+    };
+
+    let mut hasher = Sha256::default();
+
+    let nonce_slice: [u8; sodiumoxide::crypto::secretbox::NONCEBYTES]
+        = [0; sodiumoxide::crypto::secretbox::NONCEBYTES];
+    let mut nonce = secretbox::Nonce::from_slice(&nonce_slice[..]).unwrap();
+        
+    loop {
+        println!("sending records");
+        // read a block of 4096 bytes
+        let mut plaintext = [0u8; 4096];
+        let n = match file.read(&mut plaintext[..]) {
+            Ok(usize) => usize,
+            Err(why) => panic!("failed to read from file: {}", why.description())
+        };
+
+        let ciphertext = encrypt_record(&plaintext.to_vec(), nonce, &skey);
+
+        // send the encrypted record
+        send_record(stream, &ciphertext);
+
+        // increment nonce
+        nonce.increment_le_inplace();
+
+        // sha256 of the input
+        hasher.input(&plaintext[..n]);
+
+        if n < 4096 {
+            break;
+        }
+        else {
+            continue;
+        }
+    }
     hasher.result().to_vec()
 }
