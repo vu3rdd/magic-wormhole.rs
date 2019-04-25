@@ -796,7 +796,7 @@ fn receive_records(filepath: &str, filesize: u32, tcp_conn: &mut TcpStream, skey
     hasher.result().to_vec()
 }
 
-pub fn derive_key_from_purpose(key: &Vec<u8>, purpose: &str) -> Vec<u8> {
+fn derive_key_from_purpose(key: &Vec<u8>, purpose: &str) -> Vec<u8> {
     let length = sodiumoxide::crypto::secretbox::KEYBYTES;
     derive_key(key, &purpose.as_bytes().to_vec(), length)
 }

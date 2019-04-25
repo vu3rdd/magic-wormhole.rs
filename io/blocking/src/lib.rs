@@ -56,6 +56,11 @@ pub fn get_code(w: &mut Wormhole) -> String {
     w.get_code()
 }
 
+pub struct RelayUrl {
+    host: String,
+    port: u16
+}
+
 pub fn send(w: &mut Wormhole, app_id: String, code: String, msg: MessageType) {
     match msg {
         MessageType::Message(text) => {
@@ -128,6 +133,21 @@ pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
 
     //let remote_msg = "foobar".to_string();
     remote_msg
+}
+
+// return the host and port of the relay server, given the url
+pub fn parse_relay_url(url: &str) -> RelayUrl {
+    let v: Vec<&str> = url.rsplit(':').collect();
+    if v.len() == 3 && v[0] == "tcp" {
+        let maybe_port = v[2].parse();
+        match maybe_port {
+            Ok(port) => RelayUrl{ host: v[1].to_string(), port: port},
+            _ => panic!("cannot parse relay url port"),
+        }
+    }
+    else {
+        panic!("Incorrect relay server url format");
+    }
 }
 
 #[no_mangle]
