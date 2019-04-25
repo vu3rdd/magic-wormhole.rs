@@ -21,5 +21,5 @@ fn main() {
 
     // send a file
     let msg = MessageType::File{ filename: "Cargo.toml".to_string(), filesize: 170 };
-    magic_wormhole_io_blocking::send(&mut w, app_id, code, msg);
+    magic_wormhole_io_blocking::send(&mut w, app_id, code, msg, &relay_url);
 }

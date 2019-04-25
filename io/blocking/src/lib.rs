@@ -56,12 +56,7 @@ pub fn get_code(w: &mut Wormhole) -> String {
     w.get_code()
 }
 
-pub struct RelayUrl {
-    host: String,
-    port: u16
-}
-
-pub fn send(w: &mut Wormhole, app_id: String, code: String, msg: MessageType) {
+pub fn send(w: &mut Wormhole, app_id: String, code: String, msg: MessageType, relay_url: &RelayUrl) {
     match msg {
         MessageType::Message(text) => {
             w.send_message(message(&text).serialize().as_bytes());
@@ -77,7 +72,7 @@ pub fn send(w: &mut Wormhole, app_id: String, code: String, msg: MessageType) {
         },
         MessageType::File{filename, filesize} => {
             let k = w.derive_transit_key(&app_id);
-            w.send_file(&filename, filesize, &k);
+            w.send_file(&filename, filesize, &k, relay_url);
         }
     }
 }

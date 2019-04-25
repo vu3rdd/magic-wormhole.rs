@@ -57,6 +57,11 @@ use byteorder::ByteOrder;
 use byteorder::BigEndian;
 use byteorder::ReadBytesExt;
 
+pub struct RelayUrl {
+    pub host: String,
+    pub port: u16
+}
+
 enum ToCore {
     API(APIEvent),
     #[allow(dead_code)]
@@ -444,7 +449,7 @@ impl Wormhole {
         }
     }
 
-    pub fn send_file(&mut self, filename: &str, filesize: u32, key: &Vec<u8>) {
+    pub fn send_file(&mut self, filename: &str, filesize: u32, key: &Vec<u8>, relay_url: &RelayUrl) {
         // 1. start a tcp server on a random port
         let listener = TcpListener::bind("0.0.0.0:0").unwrap();
         let listen_socket = listener.local_addr().unwrap();
@@ -453,25 +458,10 @@ impl Wormhole {
 
         // 2. send transit message to peer
         // for now, only direct hints, no relay hints
-        // extract all local addresses other than localhost.
-        let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        let ifaces = datalink::interfaces();
-
-        let non_local_ifaces: Vec<&datalink::NetworkInterface> = ifaces.iter().filter(|iface| !datalink::NetworkInterface::is_loopback(iface))
-            .collect();
-        let ips: Vec<IpNetwork> = non_local_ifaces.iter()
-            .map(|iface| iface.ips.clone())
-            .flatten()
-            .filter(|ip| ip.is_ipv4())
-            .collect();
-        println!("ips: {:?}", ips);
-
-        // create abilities and hints
-        let mut hints = Vec::new();
-        hints.push(Hints::DirectTcpV1(DirectType{ priority: 0.0, hostname: ips[0].ip().to_string(), port: port}));
+        let direct_hints: Vec<Hints> = build_direct_hints(port);
         let mut abilities = Vec::new();
         abilities.push(Abilities{ttype: "direct-tcp-v1".to_string()});
-        let transit_msg = transit(abilities, hints).serialize();
+        let transit_msg = transit(abilities, direct_hints).serialize();
 
         // send the transit message
         self.send_message(transit_msg.as_bytes());
@@ -948,4 +938,24 @@ fn send_records(filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u
         }
     }
     hasher.result().to_vec()
+}
+
+fn build_direct_hints(port: u16) -> Vec<Hints> {
+    let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+    let ifaces = datalink::interfaces();
+
+    let non_local_ifaces: Vec<&datalink::NetworkInterface> = ifaces.iter().filter(|iface| !datalink::NetworkInterface::is_loopback(iface))
+        .collect();
+    let ips: Vec<IpNetwork> = non_local_ifaces.iter()
+        .map(|iface| iface.ips.clone())
+        .flatten()
+        .filter(|ip| ip.is_ipv4())
+        .collect();
+    println!("ips: {:?}", ips);
+
+        // create abilities and hints
+    let mut hints = Vec::new();
+    hints.push(Hints::DirectTcpV1(DirectType{ priority: 0.0, hostname: ips[0].ip().to_string(), port: port}));
+
+    hints
 }
