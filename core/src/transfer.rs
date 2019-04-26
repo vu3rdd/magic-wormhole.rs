@@ -86,7 +86,7 @@ pub struct DirectType {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 pub struct RelayType {
-    hints: Vec<DirectType>,
+    pub hints: Vec<DirectType>,
 }
 
 impl PeerMessage {
