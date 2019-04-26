@@ -79,6 +79,12 @@ enum XXXFromCore {
     IO(IOAction),
 }
 
+#[derive(Debug, PartialEq)]
+enum HostType {
+    Direct,
+    Relay
+}
+
 enum WSControl {
     Data(String),
     Close,
@@ -490,9 +496,6 @@ impl Wormhole {
             _ => panic!("unexpected message: {:?}", maybe_transit),
         };
 
-        // TODO: combine the two sets of hints.
-        // TODO: implement support for relay hints.
-        
         // 6. send file offer message.
         let offer_msg = offer_file(filename, filesize).serialize();
         self.send_message(offer_msg.as_bytes());
@@ -516,7 +519,6 @@ impl Wormhole {
         
         // 8. listen for connections on the port and simultaneously try connecting to the peer port.
         // extract peer's ip/hostname from 'ttype'
-        //let host = "127.0.0.1:8000".parse().unwrap();
         let direct_hosts: Vec<&DirectType> = ttype.hints_v1.iter()
             .filter(|hint|
                     match hint {
@@ -529,47 +531,33 @@ impl Wormhole {
                      _ => panic!("should not come here"),
                  })
             .collect();
-        let relay_hosts: Vec<&Hints> = ttype.hints_v1.iter()
+        let relay_hosts: Vec<&Vec<DirectType>> = ttype.hints_v1.iter()
             .filter(|hint|
                     match hint {
                         Hints::RelayV1(rt) => true,
                         _ => false,
-                    }).collect();
-        // ideally we should try connecting to all the hosts at once
-        // and select the one that succeeded first. For now, we go one
-        // by one.
-        let direct_host = format!("{}:{}", direct_hosts[0].hostname, direct_hosts[0].port).parse().unwrap();
-        println!("peer host: {}", direct_host);
-        let mut socket = connect_or_accept(direct_host, listener).unwrap();
-        println!("returned from connect_or_accept");
+                    })
+            .map(|hint|
+                 match hint {
+                     Hints::RelayV1(rt) => &rt.hints,
+                     _ => panic!("should not come here"),
+                 })
+            .collect();
 
-        // 9. create record keys
-        let (skey, rkey) = make_record_keys(key);
+        for dt in direct_hosts {
+            let direct_host = format!("{}:{}", dt.hostname, dt.port).parse().unwrap();
 
-        // 10. exchange handshake over tcp
-        let tside = generate_transit_side();
+            println!("peer host: {}", direct_host);
+            let mut val = connect_or_accept(direct_host);
+            println!("returned from connect_or_accept");
 
-        tx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
-        // 11. send the file as encrypted records.
-        // fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8>
-        println!("handshake successful");
-        let checksum = send_records(filename, &mut socket.0, &skey);
-
-        // 13. wait for the transit ack with sha256 sum from the peer.
-        let enc_transit_ack = receive_record(&mut BufReader::new(socket.0));
-        let transit_ack = decrypt_record(&enc_transit_ack, &rkey);
-        
-        let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
-        match transit_ack_msg {
-            TransitAck{ack, sha256} => {
-                if sha256 == hex::encode(checksum) {
-                    println!("transfer complete!");
-                }
-                else {
-                    panic!("receive checksum error");
-                }
-            },
-            _ => panic!("could not parse the message"),
+            match val {
+                Ok((mut socket, addr)) => {
+                    tcp_file_send(socket, key, filename);
+                    // TODO: if the transfer succeed, exit out of the iteration
+                },
+                Err(_) => continue,
+            }
         }
     }
 
@@ -650,7 +638,7 @@ impl Wormhole {
         // by one.
         let direct_host = format!("{}:{}", direct_hosts[0].hostname, direct_hosts[0].port).parse().unwrap();
         println!("peer host: {}", direct_host);
-        let mut socket = connect_or_accept(direct_host, listener).unwrap();
+        let mut socket = connect_or_accept(direct_host).unwrap();
         println!("returned from connect_or_accept");
         // create record keys
         let (skey, rkey) = make_record_keys(key);
@@ -693,10 +681,10 @@ fn generate_transit_side() -> String {
     hex::encode(x)
 }
 
-fn connect_or_accept(addr: SocketAddr, listener: TcpListener) -> Result<(TcpStream, SocketAddr), std::io::Error> {
-    let listen_socket = thread::spawn(move || {
-        listener.accept()
-    });
+fn connect_or_accept(addr: SocketAddr) -> Result<(TcpStream, SocketAddr), std::io::Error> {
+    // let listen_socket = thread::spawn(move || {
+    //     listener.accept()
+    // });
 
     let connect_socket = thread::spawn(move || {
         let tcp_stream = TcpStream::connect(addr);
@@ -983,3 +971,37 @@ fn build_relay_hints(relay_url: &RelayUrl) -> Vec<Hints> {
 
     hints
 }
+
+fn tcp_file_send(mut socket: TcpStream, key: &Vec<u8>, filename: &str) -> Result<(), String> {
+
+    // 9. create record keys
+    let (skey, rkey) = make_record_keys(key);
+
+    // 10. exchange handshake over tcp
+    let tside = generate_transit_side();
+
+    tx_handshake_exchange(&mut socket, key, &tside.as_bytes()).unwrap();
+    // 11. send the file as encrypted records.
+    // fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8>
+    println!("handshake successful");
+    let checksum = send_records(filename, &mut socket, &skey);
+
+    // 13. wait for the transit ack with sha256 sum from the peer.
+    let enc_transit_ack = receive_record(&mut BufReader::new(socket));
+    let transit_ack = decrypt_record(&enc_transit_ack, &rkey);
+
+    let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
+    match transit_ack_msg {
+        TransitAck{ack, sha256} => {
+            if sha256 == hex::encode(checksum) {
+                println!("transfer complete!");
+                Ok(())
+            }
+            else {
+                panic!("receive checksum error");
+            }
+        },
+        _ => panic!("could not parse the message"),
+    }
+}
+
