@@ -519,7 +519,7 @@ impl Wormhole {
         
         // 8. listen for connections on the port and simultaneously try connecting to the peer port.
         // extract peer's ip/hostname from 'ttype'
-        let direct_hosts: Vec<&DirectType> = ttype.hints_v1.iter()
+        let mut direct_hosts: Vec<(HostType, &DirectType)> = ttype.hints_v1.iter()
             .filter(|hint|
                     match hint {
                         Hints::DirectTcpV1(dt) => true,
@@ -527,11 +527,11 @@ impl Wormhole {
                     })
             .map(|hint|
                  match hint {
-                     Hints::DirectTcpV1(dt) => dt,
+                     Hints::DirectTcpV1(dt) => (HostType::Direct, dt),
                      _ => panic!("should not come here"),
                  })
             .collect();
-        let relay_hosts: Vec<&Vec<DirectType>> = ttype.hints_v1.iter()
+        let mut relay_hosts_list: Vec<&Vec<DirectType>> = ttype.hints_v1.iter()
             .filter(|hint|
                     match hint {
                         Hints::RelayV1(rt) => true,
@@ -544,17 +544,31 @@ impl Wormhole {
                  })
             .collect();
 
-        for dt in direct_hosts {
-            let direct_host = format!("{}:{}", dt.hostname, dt.port).parse().unwrap();
+        let mut hosts: Vec<(HostType, &DirectType)> = Vec::new();
+        let mut maybe_relay_hosts = relay_hosts_list.first();
+        let mut relay_hosts: Vec<(HostType, &DirectType)> = match maybe_relay_hosts {
+            Some(relay_host_vec) => relay_host_vec.iter()
+                .map(|host| (HostType::Relay, host))
+                .collect(),
+            None => vec![],
+        };
+
+        hosts.append(&mut direct_hosts);
+        hosts.append(&mut relay_hosts);
+
+        for host in hosts {
+            let direct_host = format!("{}:{}", host.1.hostname, host.1.port).parse().unwrap();
 
             println!("peer host: {}", direct_host);
             let mut val = connect_or_accept(direct_host);
-            println!("returned from connect_or_accept");
 
             match val {
                 Ok((mut socket, addr)) => {
-                    tcp_file_send(socket, key, filename);
-                    // TODO: if the transfer succeed, exit out of the iteration
+                    let result = tcp_file_send(socket, host.0, key, filename);
+                    match result {
+                        Ok(()) => break,
+                        _ => continue
+                    }
                 },
                 Err(_) => continue,
             }
@@ -834,6 +848,13 @@ fn make_send_handshake(key: &Vec<u8>) -> String {
     msg
 }
 
+fn make_relay_handshake(key: &Vec<u8>, tside: &[u8]) -> String {
+    let purpose = "transit_relay_token";
+    let sub_key = derive_key_from_purpose(key, purpose);
+    let msg = format!("please relay {} for side {:?}\n", hex::encode(sub_key), tside);
+    msg
+}
+
 fn tx_handshake_exchange(sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String>{
     // send handshake and receive handshake
     let tx_handshake = make_send_handshake(key);
@@ -972,7 +993,25 @@ fn build_relay_hints(relay_url: &RelayUrl) -> Vec<Hints> {
     hints
 }
 
-fn tcp_file_send(mut socket: TcpStream, key: &Vec<u8>, filename: &str) -> Result<(), String> {
+fn relay_handshake_exchange(sock: &mut TcpStream, key: &Vec<u8>, tside: &[u8]) -> Result<(), String> {
+    let relay_handshake = make_relay_handshake(key, tside);
+    let relay_handshake_msg = relay_handshake.as_bytes();
+
+    send_buffer(sock, relay_handshake_msg).unwrap();
+
+    let mut rx = [0u8; 3];
+    recv_buffer(sock, &mut rx);
+
+    let ok_msg = "ok\n".as_bytes();
+    if ok_msg == rx {
+        Ok(())
+    }
+    else {
+        Err("relay handshake failed".to_string())
+    }
+}
+
+fn tcp_file_send(mut socket: TcpStream, host_type: HostType, key: &Vec<u8>, filename: &str) -> Result<(), String> {
 
     // 9. create record keys
     let (skey, rkey) = make_record_keys(key);
