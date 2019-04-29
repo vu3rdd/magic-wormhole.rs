@@ -1019,28 +1019,40 @@ fn tcp_file_send(mut socket: TcpStream, host_type: HostType, key: &Vec<u8>, file
     // 10. exchange handshake over tcp
     let tside = generate_transit_side();
 
-    tx_handshake_exchange(&mut socket, key, &tside.as_bytes()).unwrap();
-    // 11. send the file as encrypted records.
-    // fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8>
-    println!("handshake successful");
-    let checksum = send_records(filename, &mut socket, &skey);
+    let result = if host_type == HostType::Relay {
+        relay_handshake_exchange(&mut socket, key, &tside.as_bytes())
+    }
+    else {
+        Ok(())
+    };
 
-    // 13. wait for the transit ack with sha256 sum from the peer.
-    let enc_transit_ack = receive_record(&mut BufReader::new(socket));
-    let transit_ack = decrypt_record(&enc_transit_ack, &rkey);
+    match result {
+        Ok(()) => {
+            tx_handshake_exchange(&mut socket, key, &tside.as_bytes()).unwrap();
+            // 11. send the file as encrypted records.
+            // fn send_records(&mut self, filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u8>
+            println!("handshake successful");
+            let checksum = send_records(filename, &mut socket, &skey);
 
-    let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
-    match transit_ack_msg {
-        TransitAck{ack, sha256} => {
-            if sha256 == hex::encode(checksum) {
-                println!("transfer complete!");
-                Ok(())
-            }
-            else {
-                panic!("receive checksum error");
+            // 13. wait for the transit ack with sha256 sum from the peer.
+            let enc_transit_ack = receive_record(&mut BufReader::new(socket));
+            let transit_ack = decrypt_record(&enc_transit_ack, &rkey);
+
+            let transit_ack_msg = TransitAck::deserialize(str::from_utf8(&transit_ack).unwrap());
+            match transit_ack_msg {
+                TransitAck{ack, sha256} => {
+                    if sha256 == hex::encode(checksum) {
+                        println!("transfer complete!");
+                        Ok(())
+                    }
+                    else {
+                        panic!("receive checksum error");
+                    }
+                },
+                _ => panic!("could not parse the message"),
             }
         },
-        _ => panic!("could not parse the message"),
+        Err(s) => panic!("Relay handshake failed: {}", s),
     }
 }
 
