@@ -76,7 +76,7 @@ pub enum Hints {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", tag = "type", rename = "direct-tcp-v1")]
 pub struct DirectType {
     pub priority: f32,
     pub hostname: String,
@@ -84,7 +84,7 @@ pub struct DirectType {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", tag = "type", rename = "relay-v1")]
 pub struct RelayType {
     pub hints: Vec<DirectType>,
 }
@@ -212,7 +212,7 @@ mod test {
     #[test]
     fn test_transit_ack() {
         let f1 = transit_ack("ok", "deadbeaf");
-        assert_eq!(f1.serialize(), "{\"ack\":\"ok\", \"sha256\":\"deadbeaf\"}");
+        assert_eq!(f1.serialize(), "{\"ack\":\"ok\",\"sha256\":\"deadbeaf\"}");
     }
 
     #[test]
@@ -234,6 +234,6 @@ mod test {
             )])),
         ];
         let t = transit(abilities, hints);
-        assert_eq!(t.serialize(), "{\"transit\":{\"abilities-v1\":[{\"type\":\"direct-tcp-v1\"},{\"type\":\"relay-v1\"}],\"hints-v1\":[{\"hostname\":\"192.168.1.8\",\"port\":46295,\"priority\":0.0,\"type\":\"direct-tcp-v1\"},{\"hints\":[{\"hostname\":\"magic-wormhole-transit.debian.net\",\"port\":4001,\"priority\":2.0}],\"type\":\"relay-v1\"}]}}")
+        assert_eq!(t.serialize(), "{\"transit\":{\"abilities-v1\":[{\"type\":\"direct-tcp-v1\"},{\"type\":\"relay-v1\"}],\"hints-v1\":[{\"hostname\":\"192.168.1.8\",\"port\":46295,\"priority\":0.0,\"type\":\"direct-tcp-v1\"},{\"hints\":[{\"hostname\":\"magic-wormhole-transit.debian.net\",\"port\":4001,\"priority\":2.0,\"type\":\"direct-tcp-v1\"}],\"type\":\"relay-v1\"}]}}")
     }
 }
