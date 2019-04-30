@@ -466,20 +466,20 @@ impl Wormhole {
         // 2. send transit message to peer
         // for now, only direct hints, no relay hints
         let direct_hints: Vec<Hints> = build_direct_hints(port);
-        let relay_hints: Vec<Hints> = build_relay_hints(relay_url);
+        //let relay_hints: Vec<Hints> = build_relay_hints(relay_url);
 
         let mut abilities = Vec::new();
         abilities.push(Abilities{ttype: "direct-tcp-v1".to_string()});
-        abilities.push(Abilities{ttype: "relay-v1".to_string()});
+        //abilities.push(Abilities{ttype: "relay-v1".to_string()});
 
         // combine direct hints and relay hints
         let mut our_hints: Vec<Hints> = Vec::new();
         for hint in direct_hints {
             our_hints.push(hint);
         }
-        for hint in relay_hints {
-            our_hints.push(hint);
-        }
+        //for hint in relay_hints {
+        //    our_hints.push(hint);
+        //}
 
         let transit_msg = transit(abilities, our_hints).serialize();
 
@@ -673,7 +673,7 @@ impl Wormhole {
         
         // 6. verify sha256 sum by sending an ack message to peer along with checksum.
         let ack_msg = make_transit_ack_msg(&sha256sum, &rkey);
-        send_record(&mut socket.0, &ack_msg);
+        send_record(&mut socket.0, &ack_msg, ack_msg.len());
         
         // 7. close socket.
         // well, no need, it gets dropped when it goes out of scope.
@@ -821,8 +821,9 @@ fn send_buffer(stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
     stream.write(buf)
 }
 
-fn send_record(stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
-    let buf_length: u32 = buf.len() as u32;
+fn send_record(stream: &mut TcpStream, buf: &[u8], buf_size: usize) -> io::Result<usize> {
+    let buf_length: u32 = buf_size as u32;
+    println!("record size: {:?}", buf_length);
     let buf_length_array: [u8; 4] = buf_length.to_be_bytes();
     stream.write_all(&buf_length_array[..]);
     stream.write(buf)
@@ -942,10 +943,13 @@ fn send_records(filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u
             Err(why) => panic!("failed to read from file: {}", why.description())
         };
 
-        let ciphertext = encrypt_record(&plaintext.to_vec(), nonce, &skey);
+        let mut plaintext_vec = plaintext.to_vec();
+        plaintext_vec.truncate(n);
+        
+        let ciphertext = encrypt_record(&plaintext_vec, nonce, &skey);
 
         // send the encrypted record
-        send_record(stream, &ciphertext);
+        send_record(stream, &ciphertext, n);
 
         // increment nonce
         nonce.increment_le_inplace();

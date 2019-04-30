@@ -132,7 +132,7 @@ pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
 
 // return the host and port of the relay server, given the url
 pub fn parse_relay_url(url: &str) -> RelayUrl {
-    let v: Vec<&str> = url.rsplit(':').collect();
+    let v: Vec<&str> = url.split(':').collect();
     if v.len() == 3 && v[0] == "tcp" {
         let maybe_port = v[2].parse();
         match maybe_port {

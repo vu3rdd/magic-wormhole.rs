@@ -20,6 +20,6 @@ fn main() {
     let relay_url = magic_wormhole_io_blocking::parse_relay_url(RELAY_SERVER);
 
     // send a file
-    let msg = MessageType::File{ filename: "Cargo.toml".to_string(), filesize: 170 };
+    let msg = MessageType::File{ filename: "foobar".to_string(), filesize: 4096 };
     magic_wormhole_io_blocking::send(&mut w, app_id, code, msg, &relay_url);
 }
