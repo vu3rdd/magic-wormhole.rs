@@ -673,7 +673,7 @@ impl Wormhole {
         
         // 6. verify sha256 sum by sending an ack message to peer along with checksum.
         let ack_msg = make_transit_ack_msg(&sha256sum, &rkey);
-        send_record(&mut socket.0, &ack_msg, ack_msg.len());
+        send_record(&mut socket.0, &ack_msg);
         
         // 7. close socket.
         // well, no need, it gets dropped when it goes out of scope.
@@ -720,9 +720,18 @@ fn connect_or_accept(addr: SocketAddr) -> Result<(TcpStream, SocketAddr), std::i
 
 fn encrypt_record(plaintext: &Vec<u8>, nonce: secretbox::Nonce, key: &Vec<u8>) -> Vec<u8> {
     let sodium_key = secretbox::Key::from_slice(&key).unwrap();
-    let ciphertext = secretbox::seal(plaintext, &nonce, &sodium_key);
+    // nonce in little endian (to interop with python client)
+    let mut nonce_vec = nonce.as_ref().to_vec();
+    nonce_vec.reverse();
+    let maybe_nonce_le = secretbox::Nonce::from_slice(nonce_vec.as_ref());
+    let nonce_le = match maybe_nonce_le {
+        Some(nonce_le) => nonce_le,
+        None => panic!("encrypt_record: unable to create nonce"),
+    };
+    let ciphertext = secretbox::seal(plaintext, &nonce_le, &sodium_key);
     let mut ciphertext_and_nonce = Vec::new();
-    ciphertext_and_nonce.extend(nonce.as_ref().to_vec());
+    println!("nonce: {:?}", nonce_vec);
+    ciphertext_and_nonce.extend(nonce_vec);
     ciphertext_and_nonce.extend(ciphertext.clone());
 
     ciphertext_and_nonce
@@ -821,8 +830,8 @@ fn send_buffer(stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
     stream.write(buf)
 }
 
-fn send_record(stream: &mut TcpStream, buf: &[u8], buf_size: usize) -> io::Result<usize> {
-    let buf_length: u32 = buf_size as u32;
+fn send_record(stream: &mut TcpStream, buf: &[u8]) -> io::Result<usize> {
+    let buf_length: u32 = buf.len() as u32;
     println!("record size: {:?}", buf_length);
     let buf_length_array: [u8; 4] = buf_length.to_be_bytes();
     stream.write_all(&buf_length_array[..]);
@@ -949,7 +958,7 @@ fn send_records(filepath: &str, stream: &mut TcpStream, skey: &Vec<u8>) -> Vec<u
         let ciphertext = encrypt_record(&plaintext_vec, nonce, &skey);
 
         // send the encrypted record
-        send_record(stream, &ciphertext, n);
+        send_record(stream, &ciphertext);
 
         // increment nonce
         nonce.increment_le_inplace();
