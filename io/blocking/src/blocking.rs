@@ -13,6 +13,8 @@ use magic_wormhole_core::{
     Hints,
     DirectType,
     RelayType,
+    direct_type,
+    relay_type,
     Abilities,
     transit,
     file_ack,
@@ -464,24 +466,24 @@ impl Wormhole {
         let port = listen_socket.port();
 
         // 2. send transit message to peer
-        // for now, only direct hints, no relay hints
         let direct_hints: Vec<Hints> = build_direct_hints(port);
-        //let relay_hints: Vec<Hints> = build_relay_hints(relay_url);
+        let relay_hints: Vec<Hints> = build_relay_hints(relay_url);
 
         let mut abilities = Vec::new();
         abilities.push(Abilities{ttype: "direct-tcp-v1".to_string()});
-        //abilities.push(Abilities{ttype: "relay-v1".to_string()});
+        abilities.push(Abilities{ttype: "relay-v1".to_string()});
 
         // combine direct hints and relay hints
         let mut our_hints: Vec<Hints> = Vec::new();
         for hint in direct_hints {
             our_hints.push(hint);
         }
-        //for hint in relay_hints {
-        //    our_hints.push(hint);
-        //}
+        for hint in relay_hints {
+            our_hints.push(hint);
+        }
 
         let transit_msg = transit(abilities, our_hints).serialize();
+        println!("transit_msg: {:?}", transit_msg);
 
         // send the transit message
         self.send_message(transit_msg.as_bytes());
@@ -1000,8 +1002,8 @@ fn build_direct_hints(port: u16) -> Vec<Hints> {
 fn build_relay_hints(relay_url: &RelayUrl) -> Vec<Hints> {
     let mut hints = Vec::new();
     let mut dhints = Vec::new();
-    dhints.push(DirectType{ priority: 0.0, hostname: relay_url.host.clone(), port: relay_url.port });
-    hints.push(Hints::RelayV1(RelayType{hints: dhints}));
+    dhints.push(direct_type(0.0, &relay_url.host.clone(), relay_url.port));
+    hints.push(Hints::RelayV1(relay_type(dhints)));
 
     hints
 }
