@@ -77,7 +77,7 @@ pub fn send(w: &mut Wormhole, app_id: String, code: String, msg: MessageType, re
     }
 }
 
-pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
+pub fn receive(mailbox_server: String, app_id: String, code: String, relay_url: &RelayUrl) -> String {
     trace!("connecting..");
     let mut w = connect(app_id.clone(), mailbox_server);
     w.set_code(&code);
@@ -118,7 +118,7 @@ pub fn receive(mailbox_server: String, app_id: String, code: String) -> String {
             // first derive a transit key.
             let k = w.derive_transit_key(&app_id);
             println!("Transit Message received: {:?}", transit);
-            w.receive_file(&k, transit);
+            w.receive_file(&k, transit, relay_url);
             "".to_string()
         }
     };

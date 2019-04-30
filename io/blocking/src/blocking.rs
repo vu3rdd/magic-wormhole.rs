@@ -577,7 +577,7 @@ impl Wormhole {
         }
     }
 
-    pub fn receive_file(&mut self, key: &Vec<u8>, ttype: TransitType) {
+    pub fn receive_file(&mut self, key: &Vec<u8>, ttype: TransitType, relay_url: &RelayUrl) {
         // 1. start a tcp server on a random port
         let listener = TcpListener::bind("0.0.0.0:0").unwrap();
         let listen_socket = listener.local_addr().unwrap();
@@ -585,26 +585,23 @@ impl Wormhole {
         let port = listen_socket.port();
 
         // 2. send transit message to peer
-        // for now, only direct hints, no relay hints
-        // extract all local addresses other than localhost.
-        let localhost = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        let ifaces = datalink::interfaces();
+        let direct_hints: Vec<Hints> = build_direct_hints(port);
+        let relay_hints: Vec<Hints> = build_relay_hints(relay_url);
 
-        let non_local_ifaces: Vec<&datalink::NetworkInterface> = ifaces.iter().filter(|iface| !datalink::NetworkInterface::is_loopback(iface))
-            .collect();
-        let ips: Vec<IpNetwork> = non_local_ifaces.iter()
-            .map(|iface| iface.ips.clone())
-            .flatten()
-            .filter(|ip| ip.is_ipv4())
-            .collect();
-        println!("ips: {:?}", ips);
-
-        // create abilities and hints
-        let mut hints = Vec::new();
-        hints.push(Hints::DirectTcpV1(DirectType{ priority: 0.0, hostname: ips[0].ip().to_string(), port: port}));
         let mut abilities = Vec::new();
         abilities.push(Abilities{ttype: "direct-tcp-v1".to_string()});
-        let transit_msg = transit(abilities, hints).serialize();
+        abilities.push(Abilities{ttype: "relay-v1".to_string()});
+
+        // combine direct hints and relay hints
+        let mut our_hints: Vec<Hints> = Vec::new();
+        for hint in direct_hints {
+            our_hints.push(hint);
+        }
+        for hint in relay_hints {
+            our_hints.push(hint);
+        }
+
+        let transit_msg = transit(abilities, our_hints).serialize();
 
         // send the transit message
         self.send_message(transit_msg.as_bytes());
