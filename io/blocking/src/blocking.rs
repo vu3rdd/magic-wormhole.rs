@@ -608,56 +608,75 @@ impl Wormhole {
 
         // 4. listen for connections on the port and simultaneously try connecting to the
         //    peer listening port.
+        let (mut direct_hosts, mut relay_hosts) = get_direct_relay_hosts(&ttype);
 
-        // extract peer's ip/hostname from 'ttype'
-        let direct_hosts: Vec<&DirectType> = ttype.hints_v1.iter()
-            .filter(|hint|
-                    match hint {
-                        Hints::DirectTcpV1(dt) => true,
-                        _ => false,
-                    })
-            .map(|hint|
-                 match hint {
-                     Hints::DirectTcpV1(dt) => dt,
-                     _ => panic!("should not come here"),
-                 })
-            .collect();
-        let relay_hosts: Vec<&Hints> = ttype.hints_v1.iter()
-            .filter(|hint|
-                    match hint {
-                        Hints::RelayV1(rt) => true,
-                        _ => false,
-                    }).collect();
-        // ideally we should try connecting to all the hosts at once
-        // and select the one that succeeded first. For now, we go one
-        // by one.
-        let direct_host = format!("{}:{}", direct_hosts[0].hostname, direct_hosts[0].port).parse().unwrap();
-        println!("peer host: {}", direct_host);
-        let mut socket = connect_or_accept(direct_host).unwrap();
-        println!("returned from connect_or_accept");
-        // create record keys
-        let (skey, rkey) = make_record_keys(key);
-        
-        // exchange handshake
-        let tside = generate_transit_side();
-        println!("{:?}", tside);
+        let mut hosts: Vec<(HostType, &DirectType)> = Vec::new();
+        hosts.append(&mut direct_hosts);
+        hosts.append(&mut relay_hosts);
 
-        rx_handshake_exchange(&mut socket.0, key, &tside.as_bytes()).unwrap();
+        // TODO: combine our relay hints with the peer's relay hints.
         
-        // 5. receive encrypted records
-        // now skey and rkey can be used. skey is used by the tx side, rkey is used
-        // by the rx side for symmetric encryption.
-        let checksum = receive_records(&filename, filesize, &mut socket.0, &skey);
+        // TODO: connection establishment and handshake should happen concurrently
+        // and whichever handshake succeeds should only proceed. Right now, it is
+        // serial and painfully slow.
+        for host in hosts {
+            println!("host: {:?}", host);
+            let mut direct_host_iter = format!("{}:{}", host.1.hostname, host.1.port).to_socket_addrs().unwrap();
+            let direct_host = direct_host_iter.next().unwrap();
 
-        let sha256sum = hex::encode(checksum.as_slice());
-        println!("sha256 sum: {:?}", sha256sum);
+            println!("peer host: {}", direct_host);
+            let mut val = connect_or_accept(direct_host);
+
+            println!("returned from connect_or_accept");
+
+            match val {
+                Ok((mut socket, addr)) => {
+                    println!("connected to {:?}", direct_host);
+
+                    // create record keys
+                    let (skey, rkey) = make_record_keys(key);
         
-        // 6. verify sha256 sum by sending an ack message to peer along with checksum.
-        let ack_msg = make_transit_ack_msg(&sha256sum, &rkey);
-        send_record(&mut socket.0, &ack_msg);
-        
-        // 7. close socket.
-        // well, no need, it gets dropped when it goes out of scope.
+                    // exchange handshake
+                    let tside = generate_transit_side();
+                    println!("{:?}", tside);
+
+                    let result = if host.0 == HostType::Relay {
+                        relay_handshake_exchange(&mut socket, key, &tside)
+                    }
+                    else {
+                        Ok(())
+                    };
+
+                    match result {
+                        Ok(()) => {
+                            rx_handshake_exchange(&mut socket, key, &tside.as_bytes()).unwrap();
+
+                            // 5. receive encrypted records
+                            // now skey and rkey can be used. skey is used by the tx side, rkey is used
+                            // by the rx side for symmetric encryption.
+                            let checksum = receive_records(&filename, filesize, &mut socket, &skey);
+
+                            let sha256sum = hex::encode(checksum.as_slice());
+                            println!("sha256 sum: {:?}", sha256sum);
+
+                            // 6. verify sha256 sum by sending an ack message to peer along with checksum.
+                            let ack_msg = make_transit_ack_msg(&sha256sum, &rkey);
+                            send_record(&mut socket, &ack_msg);
+
+                            // 7. close socket.
+                            // well, no need, it gets dropped when it goes out of scope.
+
+                            break
+                        },
+                        Err(s) => panic!("Relay handshake failed: {}", s),
+                    }
+                },
+                Err(_) => {
+                    println!("could not connect to {:?}", direct_host);
+                    continue
+                },
+            }
+        }
     }
 }
 
